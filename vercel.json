@@ -1,21 +1,361 @@
-{
-  "version": 2,
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/app",      "dest": "/relay-app.html" },
-    { "src": "/",         "dest": "/index.html" },
-    { "src": "/(.*)",     "dest": "/$1" }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Frame-Options",        "value": "DENY" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy",        "value": "strict-origin" },
-        { "key": "X-Relay-Environment",    "value": "UAT" },
-        { "key": "Permissions-Policy",     "value": "camera=(), microphone=(), geolocation=()" }
-      ]
+/**
+ * Relay — Bank API Proxy  v2.0
+ * Vercel Edge Function  /api/bank-proxy
+ *
+ * Supported auth types:
+ *   oauth2            — Client Credentials (body or Basic header)
+ *   oauth2_pkce       — Auth Code + PKCE (exchanges code for token)
+ *   apikey_header     — API key in a request header
+ *   apikey_query      — API key as a query parameter
+ *   bearer            — Static Bearer token (custom header name supported)
+ *   basic             — HTTP Basic Auth (base64 or base64url)
+ *   mtls              — mTLS via RELAY_MTLS_CERT / RELAY_MTLS_KEY env vars
+ */
+
+export const config = { runtime: 'edge' };
+
+export default async function handler(req) {
+  if (req.method === 'OPTIONS') return respond(null, 204);
+  if (req.method !== 'POST') return err('Method not allowed — use POST', 405);
+
+  let body;
+  try { body = await req.json(); }
+  catch { return err('Invalid JSON body', 400); }
+
+  const { action, baseUrl, path, method, params, customHeaders, auth } = body;
+
+  if (!baseUrl) return err('baseUrl is required');
+  try {
+    const u = new URL(baseUrl);
+    if (isPrivateHost(u.hostname))
+      return err('Target host is a private/internal address — blocked for security');
+  } catch { return err('Invalid baseUrl — must be a valid HTTPS URL'); }
+
+  if (!auth) return err('auth config is required');
+  const authType = normaliseAuthType(auth.type);
+
+  // PKCE token exchange action
+  if (action === 'pkce_exchange') return handlePkceExchange(auth);
+
+  // Resolve auth
+  let authResult;
+  try { authResult = await resolveAuth(authType, auth); }
+  catch (e) { return err(e.message, 502); }
+  if (authResult.error) return err(authResult.error + (authResult.hint ? ' — ' + authResult.hint : ''), authResult.status || 502);
+
+  const pingPath  = path || '/accounts/ping';
+  const fetchPath = path || '/accounts/transactions';
+
+  if (action === 'connect')
+    return proxyRequest({ baseUrl, path: pingPath, method: 'GET', params: {}, authResult, auth, authType, customHeaders, action });
+  if (action === 'fetch')
+    return proxyRequest({ baseUrl, path: fetchPath, method: method || 'GET', params: params || {}, authResult, auth, authType, customHeaders, action });
+
+  return err('Unknown action "' + action + '" — use connect | fetch | pkce_exchange');
+}
+
+// ── Auth resolution ──────────────────────────────────────────────────────────
+async function resolveAuth(authType, auth) {
+  switch (authType) {
+
+    case 'oauth2': {
+      if (!auth.tokenUrl)     return { error: 'tokenUrl is required for OAuth2' };
+      if (!auth.clientId)     return { error: 'clientId is required for OAuth2' };
+      if (!auth.clientSecret) return { error: 'clientSecret is required for OAuth2' };
+
+      const tokenMethod = auth.tokenAuthMethod || 'client_secret_post';
+      const tokenHdrs   = { 'Content-Type': 'application/x-www-form-urlencoded' };
+      const bodyP       = new URLSearchParams({ grant_type: 'client_credentials' });
+      if (auth.scope) bodyP.set('scope', auth.scope);
+
+      if (tokenMethod === 'client_secret_basic') {
+        tokenHdrs['Authorization'] = 'Basic ' + btoa(auth.clientId + ':' + auth.clientSecret);
+      } else {
+        bodyP.set('client_id',     auth.clientId);
+        bodyP.set('client_secret', auth.clientSecret);
+      }
+
+      let tr;
+      try { tr = await fetch(auth.tokenUrl, { method: 'POST', headers: tokenHdrs, body: bodyP.toString() }); }
+      catch (e) { throw new Error('Token endpoint unreachable: ' + e.message); }
+
+      if (!tr.ok) {
+        const detail = await tr.text().catch(() => '');
+        return {
+          error:  'OAuth2 token request failed (HTTP ' + tr.status + ')',
+          status: 502,
+          detail: detail.slice(0, 600),
+          hint:   tr.status === 401
+            ? 'Try switching Client Auth Method to "client_secret_basic" (credentials in Authorization header)'
+            : tr.status === 400
+            ? 'Check clientId, clientSecret, tokenUrl and scope values'
+            : '',
+        };
+      }
+
+      let td;
+      try { td = await tr.json(); }
+      catch { return { error: 'OAuth2 token response was not valid JSON' }; }
+
+      if (!td.access_token)
+        return { error: 'OAuth2 response missing access_token', detail: JSON.stringify(td).slice(0, 300) };
+
+      return {
+        authorizationHeader: 'Bearer ' + td.access_token,
+        tokenMeta: { expiresIn: td.expires_in, scope: td.scope, tokenType: td.token_type, issuedAt: new Date().toISOString() },
+      };
     }
-  ]
+
+    case 'oauth2_pkce': {
+      if (!auth.pkceCode)     return { error: 'pkceCode (authorization code) required — complete browser auth flow first' };
+      if (!auth.pkceTokenUrl) return { error: 'pkceTokenUrl is required' };
+      if (!auth.pkceClientId) return { error: 'pkceClientId is required' };
+      if (!auth.pkceRedirect) return { error: 'pkceRedirect URI is required' };
+      if (!auth.pkceVerifier) return { error: 'pkceVerifier (code_verifier) is required — generated in browser during Step 1' };
+
+      const p = new URLSearchParams({
+        grant_type:    'authorization_code',
+        code:          auth.pkceCode,
+        redirect_uri:  auth.pkceRedirect,
+        client_id:     auth.pkceClientId,
+        code_verifier: auth.pkceVerifier,
+      });
+
+      let tr;
+      try { tr = await fetch(auth.pkceTokenUrl, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: p.toString() }); }
+      catch (e) { throw new Error('PKCE token endpoint unreachable: ' + e.message); }
+
+      if (!tr.ok) {
+        const detail = await tr.text().catch(() => '');
+        return { error: 'PKCE token exchange failed (HTTP ' + tr.status + ')', status: 502, detail: detail.slice(0, 400) };
+      }
+
+      let td;
+      try { td = await tr.json(); }
+      catch { return { error: 'PKCE token response was not valid JSON' }; }
+
+      if (!td.access_token)
+        return { error: 'PKCE exchange missing access_token', detail: JSON.stringify(td).slice(0, 300) };
+
+      return {
+        authorizationHeader: 'Bearer ' + td.access_token,
+        tokenMeta: { expiresIn: td.expires_in, scope: td.scope, refreshToken: td.refresh_token ? '[present]' : undefined, issuedAt: new Date().toISOString() },
+      };
+    }
+
+    case 'apikey_header':
+      if (!auth.apiKeyValue) return { error: 'apiKeyValue is required' };
+      return { apiKeyInHeader: { name: auth.apiKeyHeader || 'X-API-Key', value: auth.apiKeyValue } };
+
+    case 'apikey_query':
+      if (!auth.apiKeyValue) return { error: 'apiKeyValue is required' };
+      return { apiKeyInQuery: { name: auth.apiKeyParam || 'api_key', value: auth.apiKeyValue } };
+
+    case 'bearer': {
+      if (!auth.bearer) return { error: 'bearer token value is required' };
+      const hdrName = (auth.bearerHeader || 'Authorization').trim();
+      const hdrVal  = hdrName.toLowerCase() === 'authorization' ? 'Bearer ' + auth.bearer : auth.bearer;
+      return { authorizationHeader: hdrVal, bearerHeaderName: hdrName };
+    }
+
+    case 'basic': {
+      if (!auth.basicUser) return { error: 'basicUser is required' };
+      const raw = auth.basicUser + ':' + (auth.basicPass || '');
+      const enc = auth.basicEncoding === 'base64url'
+        ? btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+        : btoa(raw);
+      return { authorizationHeader: 'Basic ' + enc };
+    }
+
+    case 'mtls': {
+      const cert = (typeof process !== 'undefined' ? process.env?.RELAY_MTLS_CERT : null) || null;
+      const key  = (typeof process !== 'undefined' ? process.env?.RELAY_MTLS_KEY  : null) || null;
+      if (!cert || !key) {
+        return {
+          error: 'mTLS certificates not configured — set RELAY_MTLS_CERT and RELAY_MTLS_KEY as Vercel environment variables',
+          hint:  'Vercel Edge Runtime does not yet support client-cert injection via fetch(). Switch this function to Node.js runtime (remove the export const config line) and use the https module.',
+        };
+      }
+      return { error: 'mTLS is not yet supported in Edge Runtime — see hint', hint: 'Remove export const config and use Node.js https module with cert/key.' };
+    }
+
+    default:
+      return { error: 'Unsupported auth type: "' + authType + '"' };
+  }
+}
+
+// ── Core proxy ───────────────────────────────────────────────────────────────
+async function proxyRequest({ baseUrl, path, method, params, authResult, auth, authType, customHeaders, action }) {
+  const cleanBase = baseUrl.replace(/\/$/, '');
+  const cleanPath = (path || '').startsWith('/') ? path : '/' + (path || '');
+  let targetUrl   = cleanBase + cleanPath;
+
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+  }
+  if (authResult.apiKeyInQuery) qs.set(authResult.apiKeyInQuery.name, authResult.apiKeyInQuery.value);
+  if ([...qs].length > 0) targetUrl += '?' + qs.toString();
+
+  const headers = {
+    'Accept':     'application/json, application/xml, text/plain, */*',
+    'User-Agent': 'Relay-Integration-Platform/2.0 UAT',
+  };
+
+  const bearerHeaderName = authResult.bearerHeaderName || 'Authorization';
+  if (authResult.authorizationHeader) headers[bearerHeaderName] = authResult.authorizationHeader;
+  if (authResult.apiKeyInHeader) headers[authResult.apiKeyInHeader.name] = authResult.apiKeyInHeader.value;
+
+  for (const [k, v] of Object.entries(customHeaders || {})) {
+    if (k?.trim() && v?.trim()) headers[k.trim()] = v.trim();
+  }
+
+  const t0 = Date.now();
+  let bankResp;
+  try { bankResp = await fetch(targetUrl, { method: method || 'GET', headers }); }
+  catch (e) { return json({ error: 'Network error: ' + e.message, targetUrl }, 502); }
+  const latencyMs = Date.now() - t0;
+
+  // Parse response
+  const ct = bankResp.headers.get('content-type') || '';
+  let responseBody, responseFormat = 'unknown';
+  try {
+    if (ct.includes('json')) {
+      responseBody  = await bankResp.json();
+      responseFormat = 'json';
+    } else {
+      const text = await bankResp.text();
+      if (ct.includes('xml') || ct.includes('camt') || text.trim().startsWith('<')) {
+        responseBody  = parseXml(text);
+        responseFormat = detectXmlFormat(text);
+      } else if (text.startsWith(':20:') || text.includes(':62F:') || text.includes(':25:')) {
+        responseBody  = parseMt940(text);
+        responseFormat = 'mt940';
+      } else if (text.startsWith('01,') || text.includes('\n02,')) {
+        responseBody  = parseBai2(text);
+        responseFormat = 'bai2';
+      } else {
+        responseBody  = { raw: text.slice(0, 8000), contentType: ct };
+        responseFormat = 'raw';
+      }
+    }
+  } catch { responseBody = { raw: '(could not parse response)' }; }
+
+  if (!bankResp.ok) {
+    return json({
+      error:      'Bank API returned HTTP ' + bankResp.status,
+      status:     bankResp.status,
+      statusText: bankResp.statusText,
+      detail:     safeStr(responseBody, 600),
+      targetUrl,
+      latencyMs,
+      hint:       httpHint(bankResp.status, authType),
+    }, 502);
+  }
+
+  return json({ ok: true, action, status: bankResp.status, latencyMs, targetUrl, responseFormat, tokenMeta: authResult.tokenMeta || null, body: responseBody });
+}
+
+async function handlePkceExchange(auth) {
+  const r = await resolveAuth('oauth2_pkce', auth);
+  if (r.error) return json(r, 502);
+  return json({ ok: true, action: 'pkce_exchange', ...r });
+}
+
+// ── Format parsers ───────────────────────────────────────────────────────────
+function detectXmlFormat(xml) {
+  if (xml.includes('camt.053') || xml.includes('BkToCstmrStmt')) return 'camt053';
+  if (xml.includes('camt.052') || xml.includes('BkToCstmrAcctRpt')) return 'camt052';
+  if (xml.includes('camt.054')) return 'camt054';
+  return 'xml';
+}
+
+function parseXml(xml) {
+  const get  = (tag) => { const m = xml.match(new RegExp('<' + tag + '[^>]*>([^<]*)<\\/' + tag + '>', 'i')); return m ? m[1].trim() : null; };
+  const getAll = (tag) => { const re = new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)<\\/' + tag + '>', 'gi'); const res = []; let m; while ((m = re.exec(xml)) !== null) res.push(m[1].trim()); return res; };
+  const entries = getAll('Ntry').slice(0, 200).map((e, i) => ({
+    id:          (e.match(/<EndToEndId[^>]*>([^<]+)<\/EndToEndId>/i) || e.match(/<Ref[^>]*>([^<]+)<\/Ref>/i) || [,'TXN-' + (i+1)])[1].trim(),
+    amount:      (e.match(/<Amt[^>]*>([^<]+)<\/Amt>/i) || [,null])[1] ? parseFloat((e.match(/<Amt[^>]*>([^<]+)<\/Amt>/i)||[,'0'])[1]) : null,
+    debitCredit: (e.match(/<CdtDbtInd[^>]*>([^<]+)<\/CdtDbtInd>/i) || [,null])[1],
+    date:        (e.match(/<Dt[^>]*>(\d{4}-\d{2}-\d{2})<\/Dt>/i) || [,null])[1],
+    narrative:   (e.match(/<AddtlNtryInf[^>]*>([^<]+)<\/AddtlNtryInf>/i) || e.match(/<Ustrd[^>]*>([^<]+)<\/Ustrd>/i) || [,null])[1],
+  }));
+  return { format: detectXmlFormat(xml), iban: get('IBAN'), currency: get('Ccy'), closingBalance: get('Amt'), transactionCount: entries.length, transactions: entries };
+}
+
+function parseMt940(text) {
+  const fields = {};
+  const re = /:(\d{2}[A-Z]?):([\s\S]*?)(?=:\d{2}[A-Z]?:|$)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) fields[m[1]] = (fields[m[1]] || []).concat(m[2].trim());
+  const txns = (fields['61'] || []).map((raw, i) => {
+    const cdAmt = raw.match(/\d{6}(?:\d{4})?([CD])([\d,]+)/);
+    return { id: 'TXN-'+(i+1), debitCredit: cdAmt ? cdAmt[1] : null, amount: cdAmt ? parseFloat(cdAmt[2].replace(',','.')) : null, narrative: (fields['86']||[])[i] || null };
+  });
+  return { format: 'mt940', accountId: (fields['25']||[null])[0], openingBalance: (fields['60F']||fields['60M']||[null])[0], closingBalance: (fields['62F']||fields['62M']||[null])[0], transactionCount: txns.length, transactions: txns };
+}
+
+function parseBai2(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const txns = [];
+  let acctId = null;
+  for (const line of lines) {
+    const p = line.split(',');
+    if (p[0] === '03') acctId = p[1];
+    if (p[0] === '16') txns.push({ id: 'TXN-'+(txns.length+1), typeCode: p[1], amount: p[2] ? parseInt(p[2])/100 : null, text: p.slice(4).join(',').replace(/\/$/, '').trim() });
+  }
+  return { format: 'bai2', accountId: acctId, transactionCount: txns.length, transactions: txns };
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+function normaliseAuthType(raw) {
+  const t = (raw || '').toLowerCase().trim();
+  if (t === 'oauth2' || t.includes('client_cred') || t.includes('client cred') || t === 'oauth2_client_credentials') return 'oauth2';
+  if (t === 'oauth2_pkce' || t.includes('pkce') || t.includes('auth_code') || t.includes('auth code')) return 'oauth2_pkce';
+  if (t === 'apikey_header' || t === 'apikey' || t.includes('api_key_header')) return 'apikey_header';
+  if (t === 'apikey_query' || t.includes('api_key_query')) return 'apikey_query';
+  if (t === 'bearer') return 'bearer';
+  if (t === 'basic') return 'basic';
+  if (t === 'mtls' || t === 'mutual_tls') return 'mtls';
+  return t;
+}
+
+function httpHint(status, authType) {
+  if (status === 401) {
+    if (authType === 'oauth2') return 'Token expired or invalid. Try switching tokenAuthMethod to client_secret_basic.';
+    if (authType === 'bearer') return 'Bearer token may have expired.';
+    if (authType === 'basic')  return 'Check username/password. Try base64url encoding.';
+    return 'Check credentials.';
+  }
+  if (status === 403) return 'Authenticated but forbidden — check API scopes.';
+  if (status === 404) return 'Path not found — verify endpoint path and accountId substitution.';
+  if (status === 429) return 'Rate limited — reduce fetch frequency.';
+  return undefined;
+}
+
+function safeStr(val, max) {
+  try { return (typeof val === 'string' ? val : JSON.stringify(val)).slice(0, max); }
+  catch { return String(val).slice(0, max); }
+}
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' },
+  });
+}
+
+function respond(body, status = 200) {
+  return new Response(body, {
+    status,
+    headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' },
+  });
+}
+
+function err(message, status = 400) {
+  return json({ error: message }, status);
+}
+
+function isPrivateHost(host) {
+  return [/^localhost$/i,/^127\./,/^10\./,/^192\.168\./,/^172\.(1[6-9]|2\d|3[01])\./,/^169\.254\./,/^::1$/,/^fc00:/i,/^fe80:/i,/^0\./,/^metadata\.google\.internal$/i,/^169\.254\.169\.254$/].some(p => p.test(host));
 }
