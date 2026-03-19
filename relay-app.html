@@ -1602,6 +1602,9 @@ body {
       <span class="nav-icon">🏦</span> Bank Fetch
       <span class="nav-badge green">Live</span>
     </div>
+    <div class="nav-item" data-section="apitool">
+      <span class="nav-icon">⬡</span> API Tool
+    </div>
     <div class="nav-item" data-section="reconciliation">
       <span class="nav-icon">🧠</span> Reconciliation
       <span class="nav-badge">0</span>
@@ -2430,6 +2433,226 @@ body {
           <div class="file-date">Yesterday</div>
           <div class="progress-cell"><div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div><div class="progress-pct">100%</div></div>
           <div><span class="badge badge-green">Done</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ API TOOL ═══ -->
+    <div class="section" id="section-apitool">
+      <div class="section-header">
+        <div>
+          <div class="section-h1">API Tool</div>
+          <div class="section-sub" id="apitool-sub">Send payloads · Payments · Account verification · Custom requests</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="topbar-btn ghost" onclick="apiToolClear()">Clear</button>
+          <button class="topbar-btn" id="apitool-send-btn" onclick="apiToolSend()">▶ Send</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);height:calc(100vh - 52px - 120px);min-height:500px" id="apitool-layout">
+
+        <!-- LEFT: Request builder -->
+        <div style="display:flex;flex-direction:column;border-right:1px solid var(--border);min-width:0">
+
+          <!-- Request line -->
+          <div style="display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);flex-shrink:0">
+            <select id="apitool-method" onchange="apiToolMethodChange()" style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--amber);background:var(--bg3);border:none;border-right:1px solid var(--border);padding:10px 12px;width:100px;cursor:pointer;outline:none">
+              <option value="GET">GET</option>
+              <option value="POST" selected>POST</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+            <input id="apitool-url" class="form-input" placeholder="https://uat-api.yourbank.com/v1/payments" style="flex:1;border:none;border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:10px 12px;background:var(--bg2)">
+          </div>
+
+          <!-- Tabs -->
+          <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg3)">
+            <button class="apitool-tab active" id="tab-payload"   onclick="apiToolTab('payload')"  style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg2);color:var(--amber);text-transform:uppercase;letter-spacing:.07em">Body</button>
+            <button class="apitool-tab"        id="tab-auth"      onclick="apiToolTab('auth')"     style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg3);color:var(--text3);text-transform:uppercase;letter-spacing:.07em">Auth</button>
+            <button class="apitool-tab"        id="tab-headers"   onclick="apiToolTab('headers')"  style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg3);color:var(--text3);text-transform:uppercase;letter-spacing:.07em">Headers</button>
+            <button class="apitool-tab"        id="tab-params"    onclick="apiToolTab('params')"   style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg3);color:var(--text3);text-transform:uppercase;letter-spacing:.07em">Params</button>
+            <div style="flex:1;border-right:none"></div>
+            <select id="apitool-template" onchange="apiToolLoadTemplate()" style="font-family:'IBM Plex Mono',monospace;font-size:9px;background:var(--bg3);border:none;border-left:1px solid var(--border);padding:0 10px;color:var(--text3);cursor:pointer;max-width:160px">
+              <option value="">— Load template —</option>
+              <optgroup label="Payments">
+                <option value="pain001">ISO 20022 pain.001 (Credit Transfer)</option>
+                <option value="pain008">ISO 20022 pain.008 (Direct Debit)</option>
+                <option value="rtp">Real-Time Payment (RTP)</option>
+                <option value="swift_mt103">SWIFT MT103</option>
+              </optgroup>
+              <optgroup label="Account">
+                <option value="acct_verify">Account Verification (AVS)</option>
+                <option value="acct_balance">Balance Enquiry</option>
+                <option value="acct_details">Account Details Lookup</option>
+              </optgroup>
+              <optgroup label="Beneficiary">
+                <option value="bene_create">Create Beneficiary</option>
+                <option value="bene_validate">Validate Beneficiary</option>
+              </optgroup>
+              <optgroup label="Statements">
+                <option value="stmt_request">Statement Request</option>
+                <option value="txn_detail">Transaction Detail Lookup</option>
+              </optgroup>
+              <optgroup label="Custom">
+                <option value="custom_get">Custom GET</option>
+                <option value="custom_post">Empty POST body</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- Body panel -->
+          <div id="apitool-panel-payload" style="flex:1;display:flex;flex-direction:column;min-height:0">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg3)">
+              <select id="apitool-content-type" style="font-family:'IBM Plex Mono',monospace;font-size:10px;background:transparent;border:none;color:var(--text3);cursor:pointer">
+                <option value="application/json">JSON</option>
+                <option value="application/xml">XML</option>
+                <option value="application/x-www-form-urlencoded">Form URL-encoded</option>
+                <option value="text/plain">Plain text</option>
+              </select>
+              <div style="display:flex;gap:8px">
+                <button onclick="apiToolFormatBody()" style="font-family:'IBM Plex Mono',monospace;font-size:9px;background:none;border:1px solid var(--border);color:var(--text3);padding:3px 8px;cursor:pointer">Format</button>
+                <button onclick="apiToolClearBody()" style="font-family:'IBM Plex Mono',monospace;font-size:9px;background:none;border:1px solid var(--border);color:var(--text3);padding:3px 8px;cursor:pointer">Clear</button>
+              </div>
+            </div>
+            <textarea id="apitool-body" spellcheck="false" style="flex:1;background:var(--bg);color:var(--text2);font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.7;padding:14px;border:none;resize:none;outline:none;tab-size:2" placeholder='{"amount": 100.00, "currency": "ZAR", ...}'></textarea>
+          </div>
+
+          <!-- Auth panel -->
+          <div id="apitool-panel-auth" style="flex:1;display:none;flex-direction:column;min-height:0;overflow-y:auto;padding:16px">
+            <div class="form-group">
+              <label class="form-label">Auth Type</label>
+              <select class="form-select" id="apitool-auth-type" onchange="apiToolAuthChange()">
+                <option value="none">No authentication</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="basic">Basic Auth</option>
+                <option value="apikey_header">API Key (Header)</option>
+                <option value="apikey_query">API Key (Query Param)</option>
+                <option value="oauth2">OAuth2 Client Credentials</option>
+              </select>
+            </div>
+            <div id="apitool-auth-none"         style="color:var(--text3);font-family:'IBM Plex Mono',monospace;font-size:11px">No credentials will be sent.</div>
+            <div id="apitool-auth-bearer"        style="display:none">
+              <div class="form-group"><label class="form-label">Token</label><input class="form-input" id="apitool-bearer" type="password" placeholder="eyJhbGci..."></div>
+              <div class="form-group"><label class="form-label">Header</label><input class="form-input" id="apitool-bearer-header" value="Authorization"></div>
+            </div>
+            <div id="apitool-auth-basic"         style="display:none">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Username</label><input class="form-input" id="apitool-basic-user" placeholder="api_user"></div>
+                <div class="form-group"><label class="form-label">Password</label><input class="form-input" id="apitool-basic-pass" type="password" placeholder="••••••••"></div>
+              </div>
+            </div>
+            <div id="apitool-auth-apikey_header" style="display:none">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Header Name</label><input class="form-input" id="apitool-apikey-header" value="X-API-Key"></div>
+                <div class="form-group"><label class="form-label">Key Value</label><input class="form-input" id="apitool-apikey-value" type="password" placeholder="••••••••••••••••"></div>
+              </div>
+            </div>
+            <div id="apitool-auth-apikey_query"  style="display:none">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Param Name</label><input class="form-input" id="apitool-apikey-param" value="api_key"></div>
+                <div class="form-group"><label class="form-label">Key Value</label><input class="form-input" id="apitool-apikey-qvalue" type="password" placeholder="••••••••••••••••"></div>
+              </div>
+            </div>
+            <div id="apitool-auth-oauth2"        style="display:none">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Client ID</label><input class="form-input" id="apitool-oauth-id" placeholder="client_id"></div>
+                <div class="form-group"><label class="form-label">Client Secret</label><input class="form-input" id="apitool-oauth-secret" type="password" placeholder="client_secret"></div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Token URL</label><input class="form-input" id="apitool-oauth-token-url" placeholder="https://auth.bank.com/oauth2/token"></div>
+                <div class="form-group"><label class="form-label">Scope</label><input class="form-input" id="apitool-oauth-scope" value="payments:write accounts:read"></div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Token Auth Method</label>
+                <select class="form-select" id="apitool-oauth-method">
+                  <option value="client_secret_post">Credentials in body (client_secret_post)</option>
+                  <option value="client_secret_basic">Credentials in header (client_secret_basic)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Headers panel -->
+          <div id="apitool-panel-headers" style="flex:1;display:none;flex-direction:column;min-height:0;overflow-y:auto;padding:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text3)">REQUEST HEADERS</span>
+              <button onclick="apiToolAddHeader()" style="font-family:'IBM Plex Mono',monospace;font-size:10px;background:none;border:1px solid var(--border);color:var(--amber);padding:3px 10px;cursor:pointer">+ Add</button>
+            </div>
+            <div id="apitool-headers-list">
+              <div class="apitool-header-row" style="display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;margin-bottom:6px">
+                <input class="form-input" placeholder="Header name" value="Content-Type" style="font-size:11px;padding:6px 10px">
+                <input class="form-input" placeholder="Value" value="application/json" style="font-size:11px;padding:6px 10px">
+                <button onclick="this.closest('.apitool-header-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0">×</button>
+              </div>
+              <div class="apitool-header-row" style="display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;margin-bottom:6px">
+                <input class="form-input" placeholder="Header name" value="X-Idempotency-Key" style="font-size:11px;padding:6px 10px">
+                <input class="form-input" placeholder="Value" id="apitool-idempotency-val" value="" style="font-size:11px;padding:6px 10px;font-family:'IBM Plex Mono',monospace">
+                <button onclick="this.closest('.apitool-header-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0">×</button>
+              </div>
+              <div class="apitool-header-row" style="display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;margin-bottom:6px">
+                <input class="form-input" placeholder="Header name" value="X-Bank-Environment" style="font-size:11px;padding:6px 10px">
+                <input class="form-input" placeholder="Value" value="UAT" style="font-size:11px;padding:6px 10px">
+                <button onclick="this.closest('.apitool-header-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0">×</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Query params panel -->
+          <div id="apitool-panel-params" style="flex:1;display:none;flex-direction:column;min-height:0;overflow-y:auto;padding:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text3)">QUERY PARAMETERS</span>
+              <button onclick="apiToolAddParam()" style="font-family:'IBM Plex Mono',monospace;font-size:10px;background:none;border:1px solid var(--border);color:var(--amber);padding:3px 10px;cursor:pointer">+ Add</button>
+            </div>
+            <div id="apitool-params-list">
+              <div class="apitool-param-row" style="display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;margin-bottom:6px">
+                <input class="form-input" placeholder="Key" style="font-size:11px;padding:6px 10px">
+                <input class="form-input" placeholder="Value" style="font-size:11px;padding:6px 10px">
+                <button onclick="this.closest('.apitool-param-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0">×</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Response viewer -->
+        <div style="display:flex;flex-direction:column;min-width:0">
+
+          <!-- Response meta bar -->
+          <div id="apitool-response-meta" style="display:flex;align-items:center;gap:12px;padding:0 14px;height:41px;border-bottom:1px solid var(--border);background:var(--bg3);flex-shrink:0;font-family:'IBM Plex Mono',monospace;font-size:11px">
+            <span style="color:var(--text3)">No request sent</span>
+          </div>
+
+          <!-- Response tabs -->
+          <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg3)">
+            <button class="apitool-resp-tab active" id="rtab-body"    onclick="apiToolRespTab('body')"    style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg2);color:var(--amber);text-transform:uppercase;letter-spacing:.07em">Body</button>
+            <button class="apitool-resp-tab"        id="rtab-headers" onclick="apiToolRespTab('headers')" style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg3);color:var(--text3);text-transform:uppercase;letter-spacing:.07em">Headers</button>
+            <button class="apitool-resp-tab"        id="rtab-history" onclick="apiToolRespTab('history')" style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:8px 14px;border:none;border-right:1px solid var(--border);cursor:pointer;background:var(--bg3);color:var(--text3);text-transform:uppercase;letter-spacing:.07em">History</button>
+            <div style="flex:1"></div>
+            <button id="apitool-copy-btn" onclick="apiToolCopyResponse()" style="font-family:'IBM Plex Mono',monospace;font-size:9px;background:none;border:none;border-left:1px solid var(--border);color:var(--text3);padding:0 12px;cursor:pointer">Copy</button>
+          </div>
+
+          <!-- Response body -->
+          <div id="apitool-resp-panel-body" style="flex:1;overflow-y:auto;padding:14px;min-height:0">
+            <div id="apitool-response-empty" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);font-family:'IBM Plex Mono',monospace;font-size:11px;text-align:center">
+              <div style="font-size:28px;opacity:.3">⬡</div>
+              <div>Fill in a URL and click Send</div>
+              <div style="font-size:10px;opacity:.7">Use the template selector to load a pre-built payload</div>
+            </div>
+            <pre id="apitool-response-body" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap;word-break:break-word;margin:0"></pre>
+          </div>
+
+          <!-- Response headers panel -->
+          <div id="apitool-resp-panel-headers" style="flex:1;display:none;overflow-y:auto;padding:14px;min-height:0">
+            <div id="apitool-response-headers" style="font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:2;color:var(--text2)">—</div>
+          </div>
+
+          <!-- History panel -->
+          <div id="apitool-resp-panel-history" style="flex:1;display:none;overflow-y:auto;min-height:0">
+            <div id="apitool-history-list" style="font-family:'IBM Plex Mono',monospace;font-size:11px">
+              <div style="padding:20px;color:var(--text3);text-align:center">No requests yet</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -3733,7 +3956,7 @@ function navigate(section) {
   if (el) el.classList.add('active');
   const nav = document.querySelector(`[data-section="${section}"]`);
   if (nav) nav.classList.add('active');
-  const titles = { dashboard:'Dashboard', integrations:'Integrations', workflows:'Workflow Builder', transfers:'File Transfers', bankfetch:'Bank Statement Fetch', reconciliation:'AI Reconciliation', logs:'Audit Logs' };
+  const titles = { dashboard:'Dashboard', integrations:'Integrations', workflows:'Workflow Builder', transfers:'File Transfers', bankfetch:'Bank Statement Fetch', reconciliation:'AI Reconciliation', logs:'Audit Logs', apitool:'API Tool' };
   document.getElementById('topbar-title').textContent = titles[section] || section;
   const btns = {
     dashboard:      ['View Docs',    '+ New Integration'],
@@ -3742,7 +3965,8 @@ function navigate(section) {
     transfers:      ['Settings',     '↑ Upload File'],
     bankfetch:      ['Docs',         '↓ Fetch Now'],
     reconciliation: ['Export',       '▶ Run Batch'],
-    logs:           ['↓ Export CSV', 'Clear Filters']
+    logs:           ['↓ Export CSV', 'Clear Filters'],
+    apitool:        ['History',      '▶ Send'],
   };
   if (btns[section]) {
     document.getElementById('topbar-secondary-btn').textContent = btns[section][0];
@@ -3763,6 +3987,7 @@ function handlePrimaryBtn() {
   else if (section === 'reconciliation') runBatch();
   else if (section === 'bankfetch') runFetch();
   else if (section === 'logs') { document.querySelectorAll('.log-filter')[0]?.click(); showToast('Filters cleared'); }
+  else if (section === 'apitool') apiToolSend();
   else openNewIntegration();
 }
 function handleSecondaryBtn() {
@@ -3773,6 +3998,7 @@ function handleSecondaryBtn() {
   else if (section === 'reconciliation') exportRecon();
   else if (section === 'integrations') showToast('Opening import wizard...');
   else if (section === 'bankfetch') showToast('Opening bank connection docs...');
+  else if (section === 'apitool') apiToolRespTab('history');
   else showToast('Opening documentation...');
 }
 
@@ -5991,6 +6217,502 @@ function saveBankSource() {
   closeModal('modal-bankfetch-add');
   showToast('✓ '+name+' connected · '+env+' · '+proto.toUpperCase()+' — click Fetch Now to pull statements');
 }
+
+// ─── API TOOL ────────────────────────────────────────────────────────────────
+
+const APITOOL_TEMPLATES = {
+  // ── Payments ────────────────────────────────────────────────────────────
+  pain001: {
+    method: 'POST', path: '/payments/credit-transfers',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      paymentInformation: {
+        paymentInformationId: 'PMT-' + Date.now(),
+        creationDateTime: new Date().toISOString(),
+        numberOfTransactions: 1,
+        controlSum: 1000.00,
+        paymentTypeInformation: { serviceLevel: { code: 'SEPA' }, localInstrument: { code: 'INST' }, categoryPurpose: { code: 'SUPP' } },
+        debtorAccount: { identification: { iban: 'ZA12ABCD123456789012' }, currency: 'ZAR' },
+        debtorAgent: { financialInstitutionIdentification: { bic: 'ABCDZAJJ' } },
+        creditTransferTransactionInformation: [{
+          paymentIdentification: { endToEndIdentification: 'E2E-' + Date.now() },
+          amount: { instructedAmount: { value: 1000.00, currency: 'ZAR' } },
+          creditorAgent: { financialInstitutionIdentification: { bic: 'XYZAZAJJ' } },
+          creditor: { name: 'Beneficiary Name' },
+          creditorAccount: { identification: { iban: 'ZA98XYZ987654321098' } },
+          remittanceInformation: { unstructured: 'Payment reference INV-001' },
+        }],
+      },
+    }, null, 2),
+  },
+
+  pain008: {
+    method: 'POST', path: '/payments/direct-debits',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      directDebitTransactionInformation: {
+        paymentInformationId: 'DD-' + Date.now(),
+        creationDateTime: new Date().toISOString(),
+        requestedCollectionDate: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+        debtorAccount: { identification: { iban: 'ZA12ABCD123456789012' }, currency: 'ZAR' },
+        directDebitTransaction: {
+          mandateRelatedInformation: { mandateIdentification: 'MNDT-001', dateOfSignature: '2025-01-01' },
+          amount: { instructedAmount: { value: 500.00, currency: 'ZAR' } },
+          remittanceInformation: { unstructured: 'Monthly subscription' },
+        },
+      },
+    }, null, 2),
+  },
+
+  rtp: {
+    method: 'POST', path: '/payments/instant',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      paymentId:        'RTP-' + Date.now(),
+      idempotencyKey:   crypto.randomUUID(),
+      amount:           { value: 250.00, currency: 'ZAR' },
+      debtorAccount:    { accountNumber: '123456789', bankCode: 'ABCZ' },
+      creditorAccount:  { accountNumber: '987654321', bankCode: 'XYZZ' },
+      creditorName:     'John Doe',
+      remittanceInfo:   'Invoice INV-2026-042',
+      endToEndId:       'E2E-' + Date.now(),
+      requestTimestamp: new Date().toISOString(),
+    }, null, 2),
+  },
+
+  swift_mt103: {
+    method: 'POST', path: '/swift/mt103',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      messageType:          'MT103',
+      senderReference:      'TXN' + Date.now(),
+      bankOperationCode:    'CRED',
+      valueDate:            new Date().toISOString().slice(0, 10),
+      currency:             'USD',
+      amount:               5000.00,
+      orderingCustomer:     { account: '/US12345', name: 'Ordering Customer Name', address: '123 Main St, New York, USA' },
+      orderingInstitution:  { bic: 'ABCDUS33', name: 'Sender Bank' },
+      beneficiaryCustomer:  { account: '/GB98765', name: 'Beneficiary Name', address: '456 High St, London, UK' },
+      beneficiaryInstitution: { bic: 'XYZAGB2L', name: 'Receiving Bank' },
+      remittanceInfo:       'Invoice 2026-042 Payment',
+      charges:              'SHA',
+    }, null, 2),
+  },
+
+  // ── Account ──────────────────────────────────────────────────────────────
+  acct_verify: {
+    method: 'POST', path: '/accounts/verify',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      accountNumber:   '123456789',
+      branchCode:      '250655',
+      accountType:     'CURRENT',
+      accountHolderName: 'Expected Account Holder',
+      idNumber:        '8001015009087',
+      verificationType: 'AVS',
+    }, null, 2),
+  },
+
+  acct_balance: {
+    method: 'GET', path: '/accounts/{accountId}/balance',
+    contentType: 'application/json',
+    body: '',
+  },
+
+  acct_details: {
+    method: 'GET', path: '/accounts/{accountId}',
+    contentType: 'application/json',
+    body: '',
+  },
+
+  // ── Beneficiary ─────────────────────────────────────────────────────────
+  bene_create: {
+    method: 'POST', path: '/beneficiaries',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      beneficiaryId:     'BENE-' + Date.now(),
+      name:              'Supplier Name',
+      accountNumber:     '987654321',
+      branchCode:        '198765',
+      accountType:       'CURRENT',
+      bank:              'Standard Bank',
+      reference:         'Supplier ref',
+      myReference:       'My ref',
+      notificationEmail: 'supplier@example.com',
+    }, null, 2),
+  },
+
+  bene_validate: {
+    method: 'POST', path: '/beneficiaries/validate',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      accountNumber: '987654321',
+      branchCode:    '198765',
+      accountType:   'CURRENT',
+      accountName:   'Expected Name',
+    }, null, 2),
+  },
+
+  // ── Statements ───────────────────────────────────────────────────────────
+  stmt_request: {
+    method: 'POST', path: '/accounts/{accountId}/statements/request',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      fromDate:  new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
+      toDate:    new Date().toISOString().slice(0, 10),
+      format:    'JSON',
+      delivery:  'RESPONSE',
+    }, null, 2),
+  },
+
+  txn_detail: {
+    method: 'GET', path: '/transactions/{transactionId}',
+    contentType: 'application/json',
+    body: '',
+  },
+
+  custom_get: {
+    method: 'GET', path: '/',
+    contentType: 'application/json',
+    body: '',
+  },
+
+  custom_post: {
+    method: 'POST', path: '/',
+    contentType: 'application/json',
+    body: '{\n  \n}',
+  },
+};
+
+const apiToolHistory = [];
+let apiToolLastResponse = null;
+
+function apiToolTab(tab) {
+  const panels = ['payload','auth','headers','params'];
+  panels.forEach(p => {
+    const panel = document.getElementById('apitool-panel-' + p);
+    const btn   = document.getElementById('tab-' + p);
+    if (panel) panel.style.display = p === tab ? 'flex' : 'none';
+    if (btn)   {
+      btn.style.background = p === tab ? 'var(--bg2)' : 'var(--bg3)';
+      btn.style.color      = p === tab ? 'var(--amber)' : 'var(--text3)';
+    }
+  });
+  // auto-show body textarea as flex
+  if (tab === 'payload') {
+    const panel = document.getElementById('apitool-panel-payload');
+    if (panel) panel.style.display = 'flex';
+  }
+}
+
+function apiToolRespTab(tab) {
+  const panels = ['body','headers','history'];
+  panels.forEach(p => {
+    const panel = document.getElementById('apitool-resp-panel-' + p);
+    const btn   = document.getElementById('rtab-' + p);
+    if (panel) panel.style.display = p === tab ? 'block' : 'none';
+    if (btn)   {
+      btn.style.background = p === tab ? 'var(--bg2)' : 'var(--bg3)';
+      btn.style.color      = p === tab ? 'var(--amber)' : 'var(--text3)';
+    }
+  });
+}
+
+function apiToolAuthChange() {
+  const type = document.getElementById('apitool-auth-type')?.value || 'none';
+  ['none','bearer','basic','apikey_header','apikey_query','oauth2'].forEach(t => {
+    const el = document.getElementById('apitool-auth-' + t);
+    if (el) el.style.display = t === type ? 'block' : 'none';
+  });
+}
+
+function apiToolMethodChange() {
+  const method = document.getElementById('apitool-method')?.value;
+  const bodyPanel = document.getElementById('apitool-panel-payload');
+  const bodyTA    = document.getElementById('apitool-body');
+  if (method === 'GET' || method === 'DELETE') {
+    if (bodyPanel) bodyPanel.style.opacity = '0.5';
+    if (bodyTA)    bodyTA.style.pointerEvents = 'none';
+  } else {
+    if (bodyPanel) bodyPanel.style.opacity = '1';
+    if (bodyTA)    bodyTA.style.pointerEvents = 'auto';
+  }
+}
+
+function apiToolLoadTemplate() {
+  const sel  = document.getElementById('apitool-template');
+  const key  = sel?.value;
+  if (!key) return;
+  const tmpl = APITOOL_TEMPLATES[key];
+  if (!tmpl) return;
+
+  const methodEl = document.getElementById('apitool-method');
+  const bodyEl   = document.getElementById('apitool-body');
+  const ctEl     = document.getElementById('apitool-content-type');
+  const urlEl    = document.getElementById('apitool-url');
+
+  if (methodEl) methodEl.value = tmpl.method || 'POST';
+  if (bodyEl)   bodyEl.value   = tmpl.body   || '';
+  if (ctEl)     ctEl.value     = tmpl.contentType || 'application/json';
+
+  // Set path relative to existing base URL or leave as hint
+  if (urlEl) {
+    const current = urlEl.value.trim();
+    try {
+      const base = new URL(current);
+      urlEl.value = base.origin + tmpl.path;
+    } catch {
+      urlEl.value = 'https://uat-api.yourbank.com/v1' + tmpl.path;
+    }
+  }
+
+  // Generate fresh idempotency key
+  const idkEl = document.getElementById('apitool-idempotency-val');
+  if (idkEl && !idkEl.value) idkEl.value = crypto.randomUUID();
+
+  apiToolMethodChange();
+  apiToolTab('payload');
+  sel.value = '';
+}
+
+function apiToolFormatBody() {
+  const ta = document.getElementById('apitool-body');
+  if (!ta || !ta.value.trim()) return;
+  try {
+    ta.value = JSON.stringify(JSON.parse(ta.value), null, 2);
+  } catch {
+    showToast('Body is not valid JSON — cannot format');
+  }
+}
+
+function apiToolClearBody() {
+  const ta = document.getElementById('apitool-body');
+  if (ta) ta.value = '';
+}
+
+function apiToolAddHeader() {
+  const list = document.getElementById('apitool-headers-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'apitool-header-row';
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;margin-bottom:6px';
+  row.innerHTML = '<input class="form-input" placeholder="Header name" style="font-size:11px;padding:6px 10px"><input class="form-input" placeholder="Value" style="font-size:11px;padding:6px 10px"><button onclick="this.closest(\'.apitool-header-row\').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0">×</button>';
+  list.appendChild(row);
+}
+
+function apiToolAddParam() {
+  const list = document.getElementById('apitool-params-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.className = 'apitool-param-row';
+  row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;margin-bottom:6px';
+  row.innerHTML = '<input class="form-input" placeholder="Key" style="font-size:11px;padding:6px 10px"><input class="form-input" placeholder="Value" style="font-size:11px;padding:6px 10px"><button onclick="this.closest(\'.apitool-param-row\').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0">×</button>';
+  list.appendChild(row);
+}
+
+function apiToolClear() {
+  const ta = document.getElementById('apitool-body');  if (ta) ta.value = '';
+  const url = document.getElementById('apitool-url'); if (url) url.value = '';
+  const meta = document.getElementById('apitool-response-meta');
+  if (meta) meta.innerHTML = '<span style="color:var(--text3)">No request sent</span>';
+  const body = document.getElementById('apitool-response-body');
+  if (body) { body.textContent = ''; body.style.display = 'none'; }
+  const empty = document.getElementById('apitool-response-empty');
+  if (empty) empty.style.display = 'flex';
+  const hdrs = document.getElementById('apitool-response-headers');
+  if (hdrs) hdrs.innerHTML = '—';
+  apiToolLastResponse = null;
+}
+
+function apiToolCopyResponse() {
+  if (!apiToolLastResponse) { showToast('No response to copy'); return; }
+  navigator.clipboard?.writeText(JSON.stringify(apiToolLastResponse, null, 2))
+    .then(() => showToast('Response copied to clipboard'))
+    .catch(() => showToast('Copy failed — use Ctrl+A in the response panel'));
+}
+
+function apiToolCollectAuth() {
+  const type = document.getElementById('apitool-auth-type')?.value || 'none';
+  if (type === 'none') return null;
+  const base = {
+    type,
+    bearer:           document.getElementById('apitool-bearer')?.value       || '',
+    bearerHeader:     document.getElementById('apitool-bearer-header')?.value || 'Authorization',
+    basicUser:        document.getElementById('apitool-basic-user')?.value    || '',
+    basicPass:        document.getElementById('apitool-basic-pass')?.value    || '',
+    apiKeyHeader:     document.getElementById('apitool-apikey-header')?.value || 'X-API-Key',
+    apiKeyValue:      type === 'apikey_query'
+                        ? (document.getElementById('apitool-apikey-qvalue')?.value || '')
+                        : (document.getElementById('apitool-apikey-value')?.value  || ''),
+    apiKeyParam:      document.getElementById('apitool-apikey-param')?.value  || 'api_key',
+    clientId:         document.getElementById('apitool-oauth-id')?.value      || '',
+    clientSecret:     document.getElementById('apitool-oauth-secret')?.value  || '',
+    tokenUrl:         document.getElementById('apitool-oauth-token-url')?.value || '',
+    scope:            document.getElementById('apitool-oauth-scope')?.value   || '',
+    tokenAuthMethod:  document.getElementById('apitool-oauth-method')?.value  || 'client_secret_post',
+  };
+  return base;
+}
+
+async function apiToolSend() {
+  const urlEl  = document.getElementById('apitool-url');
+  const url    = urlEl?.value?.trim();
+  if (!url) { showToast('Enter a URL first'); urlEl?.focus(); return; }
+
+  const method = document.getElementById('apitool-method')?.value || 'POST';
+  const rawBody = document.getElementById('apitool-body')?.value?.trim() || '';
+  const ct      = document.getElementById('apitool-content-type')?.value || 'application/json';
+  const auth    = apiToolCollectAuth();
+
+  // Collect headers
+  const customHeaders = {};
+  document.querySelectorAll('.apitool-header-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    if (inputs[0]?.value?.trim() && inputs[1]?.value?.trim())
+      customHeaders[inputs[0].value.trim()] = inputs[1].value.trim();
+  });
+
+  // Collect query params
+  const queryParams = {};
+  document.querySelectorAll('.apitool-param-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    if (inputs[0]?.value?.trim())
+      queryParams[inputs[0].value.trim()] = inputs[1]?.value?.trim() || '';
+  });
+
+  // Build payload for proxy
+  let payload;
+  if (method === 'GET' || method === 'DELETE' || !rawBody) {
+    payload = null;
+  } else {
+    // Validate JSON if content-type is JSON
+    if (ct === 'application/json' && rawBody) {
+      try { JSON.parse(rawBody); }
+      catch (e) { showToast('Invalid JSON body: ' + e.message); return; }
+    }
+    payload = rawBody;
+  }
+
+  // Update UI — sending state
+  const sendBtn = document.getElementById('apitool-send-btn');
+  if (sendBtn) { sendBtn.textContent = '⏳ Sending...'; sendBtn.disabled = true; }
+
+  const metaEl   = document.getElementById('apitool-response-meta');
+  const bodyEl   = document.getElementById('apitool-response-body');
+  const emptyEl  = document.getElementById('apitool-response-empty');
+  const hdrsEl   = document.getElementById('apitool-response-headers');
+  if (metaEl) metaEl.innerHTML = '<span style="color:var(--amber)">● Sending...</span>';
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (bodyEl)  { bodyEl.style.display = 'block'; bodyEl.textContent = ''; }
+
+  const t0 = Date.now();
+
+  try {
+    const proxyBody = {
+      action:       'send_payload',
+      baseUrl:      url,
+      method,
+      payload,
+      contentType:  ct,
+      params:       queryParams,
+      customHeaders,
+    };
+    if (auth) proxyBody.auth = auth;
+
+    const resp = await fetch('/api/bank-proxy', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(proxyBody),
+    });
+
+    const latencyMs = Date.now() - t0;
+    const data = await resp.json();
+    apiToolLastResponse = data;
+
+    // Status badge
+    const sc    = data.status || resp.status;
+    const scColor = sc >= 200 && sc < 300 ? 'var(--green)' : sc >= 400 ? 'var(--red)' : 'var(--amber)';
+    if (metaEl) {
+      metaEl.innerHTML =
+        '<span style="color:' + scColor + ';font-weight:700">' + sc + ' ' + (data.statusText || '') + '</span>' +
+        '<span style="color:var(--text3)">·</span>' +
+        '<span style="color:var(--text3)">' + latencyMs + 'ms</span>' +
+        (data.responseFormat ? '<span style="color:var(--text3)">·</span><span style="color:var(--text3)">' + data.responseFormat.toUpperCase() + '</span>' : '') +
+        (data.tokenMeta ? '<span style="color:var(--amber);margin-left:6px">⚡ OAuth2 token acquired</span>' : '');
+    }
+
+    // Response body
+    let displayBody;
+    if (data.error) {
+      displayBody = '// Error\n' + data.error + (data.detail ? '\n\n// Detail\n' + data.detail : '') + (data.hint ? '\n\n// Hint\n' + data.hint : '');
+      if (bodyEl) bodyEl.style.color = 'var(--red)';
+    } else {
+      displayBody = JSON.stringify(data.body || data, null, 2);
+      if (bodyEl) bodyEl.style.color = 'var(--text2)';
+    }
+    if (bodyEl) bodyEl.textContent = displayBody;
+
+    // Response headers
+    if (hdrsEl && data.responseHeaders) {
+      hdrsEl.innerHTML = Object.entries(data.responseHeaders)
+        .map(([k, v]) => '<div><span style="color:var(--amber)">' + escapeHtml(k) + '</span>: <span style="color:var(--text2)">' + escapeHtml(String(v)) + '</span></div>')
+        .join('');
+    }
+
+    // History
+    addApiToolHistory({ method, url, status: sc, latencyMs, payload: rawBody, response: data });
+
+    // Log to audit
+    const actionLabel = data.error ? 'failed' : 'succeeded';
+    logEvent(data.error ? 'err' : 'ok', 'API_TOOL',
+      method + ' <span style="color:var(--amber)">' + escapeHtml(url.replace(/^https?:\/\/[^/]+/, '').slice(0, 60)) + '</span> · ' +
+      '<span style="color:' + scColor + '">' + sc + '</span> · ' + latencyMs + 'ms');
+
+  } catch (err) {
+    const latencyMs = Date.now() - t0;
+    // Proxy not deployed — show clear message
+    if (metaEl) metaEl.innerHTML = '<span style="color:var(--red)">✗ Proxy not reachable</span>';
+    if (bodyEl) {
+      bodyEl.style.color = 'var(--red)';
+      bodyEl.textContent = '// Proxy unreachable: ' + err.message + '\n// Deploy /api/bank-proxy to send real requests\n// Ensure vercel.json routes /api/(.*) to /api/$1';
+    }
+    logEvent('err', 'API_TOOL', 'Request failed · proxy unreachable · ' + err.message);
+  } finally {
+    if (sendBtn) { sendBtn.textContent = '▶ Send'; sendBtn.disabled = false; }
+  }
+}
+
+function addApiToolHistory(entry) {
+  apiToolHistory.unshift(entry);
+  if (apiToolHistory.length > 50) apiToolHistory.pop();
+  const list = document.getElementById('apitool-history-list');
+  if (!list) return;
+  const sc = entry.status;
+  const scColor = sc >= 200 && sc < 300 ? 'var(--green)' : sc >= 400 ? 'var(--red)' : 'var(--amber)';
+  const item = document.createElement('div');
+  item.style.cssText = 'padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s';
+  item.onmouseover = () => item.style.background = 'var(--bg3)';
+  item.onmouseout  = () => item.style.background = '';
+  item.onclick     = () => {
+    const bodyEl = document.getElementById('apitool-response-body');
+    if (bodyEl) { bodyEl.style.display = 'block'; bodyEl.textContent = JSON.stringify(entry.response, null, 2); bodyEl.style.color = 'var(--text2)'; }
+    apiToolRespTab('body');
+    const metaEl = document.getElementById('apitool-response-meta');
+    if (metaEl) metaEl.innerHTML = '<span style="color:' + scColor + ';font-weight:700">' + sc + '</span><span style="color:var(--text3)">· ' + entry.latencyMs + 'ms · from history</span>';
+  };
+  const path = (() => { try { return new URL(entry.url).pathname.slice(0, 50); } catch { return entry.url.slice(0, 50); } })();
+  item.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:var(--amber);font-weight:600;width:44px">' + entry.method + '</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(path) + '</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:' + scColor + ';font-weight:600">' + sc + '</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:var(--text3)">' + entry.latencyMs + 'ms</span></div>';
+  // Remove "no requests" placeholder
+  const placeholder = list.querySelector('div[style*="text-align:center"]');
+  if (placeholder) placeholder.remove();
+  list.prepend(item);
+}
+
+// Init: generate idempotency key on load
+document.addEventListener('DOMContentLoaded', () => {
+  const idkEl = document.getElementById('apitool-idempotency-val');
+  if (idkEl) idkEl.value = crypto.randomUUID();
+});
 
 // ─── TOAST ───
 function showToast(msg) {
