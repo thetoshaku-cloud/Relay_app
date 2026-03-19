@@ -1,1 +1,286 @@
+/**
+ * Relay — Bank API Proxy
+ * Vercel Serverless Function  /api/bank-proxy
+ *
+ * Handles OAuth2 token acquisition + proxied bank API calls so the
+ * browser never touches the bank server directly (avoids CORS).
+ *
+ * POST /api/bank-proxy
+ * Body: {
+ *   action:        "connect" | "fetch"
+ *   baseUrl:       "https://uat-api.yourbank.com/v1"
+ *   path:          "/accounts/YOC-001/transactions"
+ *   method:        "GET" | "POST"
+ *   params:        { fromDate, toDate, accountId, ... }
+ *   customHeaders: { "X-Bank-Environment": "UAT", ... }
+ *   auth: {
+ *     type:         "oauth2_client_credentials" | "oauth2_pkce" |
+ *                   "apikey_header" | "apikey_query" |
+ *                   "bearer" | "basic" | "mtls"
+ *     -- OAuth2 --
+ *     tokenUrl:     "https://auth.bank.com/oauth2/token"
+ *     clientId:     "..."
+ *     clientSecret: "..."
+ *     -- API Key --
+ *     apiKeyHeader: "X-API-Key"
+ *     apiKeyValue:  "..."
+ *     -- Bearer --
+ *     bearer:       "eyJhbGci..."
+ *     -- Basic --
+ *     basicUser:    "svc_relay"
+ *     basicPass:    "..."
+ *   }
+ * }
+ */
 
+export const config = { runtime: 'edge' };
+
+export default async function handler(req) {
+  // ── CORS preflight ────────────────────────────────────────────────────────
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(),
+    });
+  }
+
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed — use POST' }, 405);
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { action, baseUrl, path, method, params, customHeaders, auth } = body;
+
+  // ── Validation ────────────────────────────────────────────────────────────
+  if (!baseUrl)  return jsonResponse({ error: 'baseUrl is required' }, 400);
+  if (!auth)     return jsonResponse({ error: 'auth config is required' }, 400);
+
+  // Reject requests to internal/private IP ranges (SSRF protection)
+  try {
+    const u = new URL(baseUrl);
+    const host = u.hostname;
+    if (isPrivateHost(host)) {
+      return jsonResponse({ error: 'Target host is a private/internal address — not allowed' }, 400);
+    }
+  } catch {
+    return jsonResponse({ error: 'Invalid baseUrl — must be a valid URL' }, 400);
+  }
+
+  // ── Acquire auth token ────────────────────────────────────────────────────
+  let authHeader;
+  let tokenMeta = null;
+  const authType = (auth.type || '').toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/oauth2.*client.*cred.*|oauth2_cc/i, 'oauth2_client_credentials')
+    .replace(/oauth2.*pkce|oauth2.*auth.*code/i, 'oauth2_pkce')
+    .replace(/apikey.*header|api_key.*header/i, 'apikey_header')
+    .replace(/apikey.*query|api_key.*query/i, 'apikey_query');
+
+  try {
+    if (authType.includes('oauth2') && !authType.includes('pkce')) {
+      // OAuth2 Client Credentials flow
+      if (!auth.tokenUrl) return jsonResponse({ error: 'tokenUrl required for OAuth2' }, 400);
+      if (!auth.clientId) return jsonResponse({ error: 'clientId required for OAuth2' }, 400);
+      if (!auth.clientSecret) return jsonResponse({ error: 'clientSecret required for OAuth2' }, 400);
+
+      const tokenResp = await fetch(auth.tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type:    'client_credentials',
+          client_id:     auth.clientId,
+          client_secret: auth.clientSecret,
+          scope:         'statements:read accounts:read',
+        }).toString(),
+      });
+
+      if (!tokenResp.ok) {
+        const errText = await tokenResp.text().catch(() => '');
+        return jsonResponse({
+          error:  'OAuth2 token request failed',
+          status: tokenResp.status,
+          detail: errText.slice(0, 500),
+        }, 502);
+      }
+
+      const tokenData = await tokenResp.json();
+      if (!tokenData.access_token) {
+        return jsonResponse({ error: 'OAuth2 response did not contain access_token', detail: JSON.stringify(tokenData).slice(0, 300) }, 502);
+      }
+      authHeader = 'Bearer ' + tokenData.access_token;
+      tokenMeta  = { expiresIn: tokenData.expires_in, scope: tokenData.scope, tokenType: tokenData.token_type };
+
+    } else if (authType.includes('bearer')) {
+      if (!auth.bearer) return jsonResponse({ error: 'bearer token value is required' }, 400);
+      authHeader = 'Bearer ' + auth.bearer;
+
+    } else if (authType.includes('basic')) {
+      if (!auth.basicUser) return jsonResponse({ error: 'basicUser is required for Basic auth' }, 400);
+      authHeader = 'Basic ' + btoa(auth.basicUser + ':' + (auth.basicPass || ''));
+
+    } else if (authType.includes('apikey_header')) {
+      // Auth header added below in customHeaders merge
+      authHeader = null;
+
+    } else if (authType.includes('apikey_query')) {
+      authHeader = null;
+
+    } else if (authType.includes('oauth2_pkce')) {
+      return jsonResponse({ error: 'OAuth2 PKCE requires browser redirect — not supported in proxy. Use Client Credentials for server-side access.' }, 400);
+
+    } else if (authType.includes('mtls')) {
+      return jsonResponse({ error: 'mTLS requires certificate configuration on the Vercel project. Contact your admin to add RELAY_MTLS_CERT and RELAY_MTLS_KEY environment variables.' }, 400);
+
+    } else {
+      return jsonResponse({ error: 'Unsupported auth type: ' + auth.type }, 400);
+    }
+  } catch (err) {
+    return jsonResponse({ error: 'Auth failed: ' + err.message }, 502);
+  }
+
+  // ── Build target URL ──────────────────────────────────────────────────────
+  if (action === 'connect') {
+    // For connection test: use a lightweight ping path
+    const pingPath = path || '/accounts/ping';
+    return makeProxiedRequest({
+      baseUrl, path: pingPath, method: 'GET',
+      params: {}, authHeader, auth, customHeaders, tokenMeta,
+      action: 'connect',
+    });
+  }
+
+  if (action === 'fetch') {
+    return makeProxiedRequest({
+      baseUrl, path: path || '/accounts/transactions', method: method || 'GET',
+      params: params || {}, authHeader, auth, customHeaders, tokenMeta,
+      action: 'fetch',
+    });
+  }
+
+  return jsonResponse({ error: 'Unknown action: ' + action + ' — use "connect" or "fetch"' }, 400);
+}
+
+// ── Core proxy request ────────────────────────────────────────────────────────
+async function makeProxiedRequest({ baseUrl, path, method, params, authHeader, auth, customHeaders, tokenMeta, action }) {
+  // Build URL with query params
+  const cleanBase = baseUrl.replace(/\/$/, '');
+  const cleanPath = path.startsWith('/') ? path : '/' + path;
+  let targetUrl = cleanBase + cleanPath;
+
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, v);
+  }
+
+  // API key in query string
+  const authType = (auth.type || '').toLowerCase();
+  if (authType.includes('apikey_query') && auth.apiKeyValue) {
+    qs.set(auth.apiKeyHeader || 'api_key', auth.apiKeyValue);
+  }
+
+  if ([...qs].length > 0) targetUrl += '?' + qs.toString();
+
+  // Build headers
+  const headers = {
+    'Accept':       'application/json',
+    'Content-Type': 'application/json',
+    'User-Agent':   'Relay-Integration-Platform/1.0 UAT',
+  };
+
+  if (authHeader) headers['Authorization'] = authHeader;
+
+  // API key in header
+  if (authType.includes('apikey_header') && auth.apiKeyValue) {
+    headers[auth.apiKeyHeader || 'X-API-Key'] = auth.apiKeyValue;
+  }
+
+  // Merge custom headers
+  for (const [k, v] of Object.entries(customHeaders || {})) {
+    if (k && v) headers[k] = v;
+  }
+
+  const t0 = Date.now();
+  let bankResp;
+  try {
+    bankResp = await fetch(targetUrl, { method, headers });
+  } catch (err) {
+    return jsonResponse({ error: 'Network error reaching bank endpoint: ' + err.message, targetUrl }, 502);
+  }
+  const latencyMs = Date.now() - t0;
+
+  // Read response body
+  const contentType = bankResp.headers.get('content-type') || '';
+  let responseBody;
+  try {
+    if (contentType.includes('json')) {
+      responseBody = await bankResp.json();
+    } else {
+      const text = await bankResp.text();
+      responseBody = { raw: text.slice(0, 4000), contentType };
+    }
+  } catch {
+    responseBody = { raw: '(could not parse response body)' };
+  }
+
+  if (!bankResp.ok) {
+    return jsonResponse({
+      error:        'Bank API returned HTTP ' + bankResp.status,
+      status:       bankResp.status,
+      statusText:   bankResp.statusText,
+      detail:       typeof responseBody === 'object' ? JSON.stringify(responseBody).slice(0, 500) : String(responseBody).slice(0, 500),
+      targetUrl,
+      latencyMs,
+    }, 502);
+  }
+
+  return jsonResponse({
+    ok:        true,
+    action,
+    status:    bankResp.status,
+    latencyMs,
+    targetUrl,
+    tokenMeta: tokenMeta || null,
+    body:      responseBody,
+  });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
+  });
+}
+
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin':  '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
+
+function isPrivateHost(host) {
+  // Block SSRF to private/loopback/link-local addresses
+  const privatePatterns = [
+    /^localhost$/i,
+    /^127\./,
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^169\.254\./,
+    /^::1$/,
+    /^fc00:/i,
+    /^fe80:/i,
+    /^0\./,
+    /^metadata\.google\.internal$/i,
+    /^169\.254\.169\.254$/,   // AWS/GCP metadata
+  ];
+  return privatePatterns.some(p => p.test(host));
+}
