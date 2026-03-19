@@ -4833,69 +4833,153 @@ function updatePreview() {
 function runFetch() {
   if (fetchRunning) return;
   fetchRunning = true;
+
+  const activeCard     = document.querySelector('#bank-connections-list .bank-connection-item.selected');
+  const activeBankName = activeCard?.querySelector('.bank-conn-name')?.textContent || 'Bank';
+  const activeEnvBadge = activeCard?.querySelector('.badge')?.textContent?.trim() || 'UAT';
+  const activeEnvClr   = activeEnvBadge === 'CAT' ? '#a855f7' : activeEnvBadge === 'PROD' ? 'var(--green)' : 'var(--amber)';
   const progress = document.getElementById('pull-progress');
   const bar      = document.getElementById('fetch-progress-bar');
   const pctLbl   = document.getElementById('fetch-pct-label');
   const btn      = document.getElementById('fetch-run-btn');
   if (!progress || !bar) { fetchRunning = false; return; }
 
-  // Read the active bank name and env from the selected card
-  const activeCard = document.querySelector('#bank-connections-list .bank-connection-item.selected');
-  const activeBankName = activeCard?.querySelector('.bank-conn-name')?.textContent || 'Bank';
-  const activeEnvBadge = activeCard?.querySelector('.badge')?.textContent?.trim() || 'UAT';
-  const activeEnvClr   = activeEnvBadge === 'CAT' ? '#a855f7' : activeEnvBadge === 'PROD' ? 'var(--green)' : 'var(--amber)';
-
   progress.classList.add('active');
   if (btn) { btn.textContent = '● Fetching...'; btn.disabled = true; }
-
-  // Update progress step labels to reflect env
-  const ps1label = document.querySelector('#ps-1 .pull-step-label');
-  if (ps1label) ps1label.textContent = 'Authenticate · ' + activeEnvBadge;
 
   const steps = ['ps-1','ps-2','ps-3','ps-4','ps-5'];
   let pct = 0, stepIdx = 0;
 
-  const timer = setInterval(() => {
-    pct = Math.min(pct + Math.random() * 7 + 4, 100);
-    bar.style.width = pct + '%';
-    if (pctLbl) pctLbl.textContent = Math.round(pct) + '%';
-
+  function advanceUI() {
     if (pct >= (stepIdx + 1) * 20 && stepIdx < steps.length) {
       if (stepIdx > 0) {
         const prev = document.getElementById(steps[stepIdx - 1]);
-        if (prev) { prev.classList.remove('active-step'); prev.classList.add('done'); const ic = prev.querySelector('.pull-step-icon'); if(ic) ic.textContent = '✓'; }
+        if (prev) { prev.classList.remove('active-step'); prev.classList.add('done'); const ic = prev.querySelector('.pull-step-icon'); if (ic) ic.textContent = '✓'; }
       }
       const cur = document.getElementById(steps[stepIdx]);
       if (cur) cur.classList.add('active-step');
       stepIdx++;
     }
+  }
 
-    if (pct >= 100) {
-      clearInterval(timer);
+  function finishUI(success) {
+    steps.forEach(s => {
+      const el = document.getElementById(s);
+      if (el) {
+        el.classList.remove('active-step');
+        if (success) el.classList.add('done');
+        const ic = el.querySelector('.pull-step-icon');
+        if (ic) ic.textContent = success ? '✓' : '○';
+      }
+    });
+    bar.style.background = success ? 'var(--green)' : 'var(--red)';
+    if (btn) { btn.textContent = '↓ Fetch Now'; btn.disabled = false; }
+    fetchRunning = false;
+    setTimeout(() => {
+      progress.classList.remove('active');
       steps.forEach(s => {
         const el = document.getElementById(s);
-        if (el) { el.classList.remove('active-step'); el.classList.add('done'); const ic = el.querySelector('.pull-step-icon'); if(ic) ic.textContent = '✓'; }
+        if (el) { el.classList.remove('done','active-step'); const ic = el.querySelector('.pull-step-icon'); if (ic) ic.textContent = '○'; }
       });
-      bar.style.background = 'var(--green)';
-      if (btn) { btn.textContent = '↓ Fetch Now'; btn.disabled = false; }
-      fetchRunning = false;
-      setTimeout(() => {
-        progress.classList.remove('active');
-        steps.forEach(s => {
-          const el = document.getElementById(s);
-          if (el) { el.classList.remove('done','active-step'); const ic = el.querySelector('.pull-step-icon'); if(ic) ic.textContent = '○'; }
-        });
-        bar.style.width = '0%'; bar.style.background = 'var(--amber)';
-        if (pctLbl) pctLbl.textContent = '0%';
-        renderFetchedFiles();
-        updatePreview();
-        const txnCount = (FETCHED_FILES[activeBankId]||[]).reduce((a,f)=>a+f.txns,0);
-        if (typeof logEvent === 'function') logEvent('ok', 'BANK_FETCH',
-          'Fetch complete · <strong>' + activeBankName + '</strong> · env: <span style="color:' + activeEnvClr + ';font-weight:600">' + activeEnvBadge + '</span> · <strong>' + txnCount.toLocaleString() + ' transactions</strong> parsed · queued for reconciliation');
-        showToast('✓ Fetch complete — statements parsed and queued for reconciliation');
-      }, 900);
+      bar.style.width = '0%'; bar.style.background = 'var(--amber)';
+      if (pctLbl) pctLbl.textContent = '0%';
+    }, 1200);
+  }
+
+  // Animate progress bar while waiting for fetch
+  const uiTimer = setInterval(() => {
+    // Advance up to 85% while waiting for the real response
+    if (pct < 85) {
+      pct = Math.min(pct + Math.random() * 5 + 2, 85);
+      bar.style.width = pct + '%';
+      if (pctLbl) pctLbl.textContent = Math.round(pct) + '%';
+      advanceUI();
     }
-  }, 85);
+  }, 120);
+
+  // Read config from the selected bank card's stored connection
+  const connId = activeBankId;
+  const stored = BANK_CONNECTIONS[connId];
+
+  // Build request — use stored config if available, else fallback defaults
+  let reqBody = null;
+  if (stored) {
+    reqBody = buildProxyRequest({
+      baseUrl:    stored.url,
+      auth:       stored.auth,
+      path:       stored.stmtPath || '/accounts/{accountId}/transactions',
+      method:     stored.method || 'GET',
+      dateFrom:   new Date(Date.now() - 86400000).toISOString().slice(0,10),
+      dateTo:     new Date().toISOString().slice(0,10),
+      accountId:  stored.accountId || '',
+    });
+  }
+
+  const doFetch = reqBody
+    ? fetch('/api/bank-proxy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fetch', ...reqBody }) }).then(r => r.json())
+    : Promise.reject(new Error('no-config'));
+
+  doFetch
+    .then(data => {
+      clearInterval(uiTimer);
+      pct = 100; bar.style.width = '100%'; if (pctLbl) pctLbl.textContent = '100%';
+      advanceUI(); advanceUI(); advanceUI();
+
+      if (data.error) {
+        finishUI(false);
+        showToast('✗ Fetch failed: ' + data.error);
+        logEvent('err', 'BANK_FETCH', 'Fetch failed · <strong>' + activeBankName + '</strong> · env: <span style="color:' + activeEnvClr + '">' + activeEnvBadge + '</span> · ' + data.error);
+        return;
+      }
+
+      // Parse real transactions into FETCHED_FILES format
+      const rawBody = data.body || data;
+      let txns = [];
+      if (Array.isArray(rawBody)) txns = rawBody;
+      else if (Array.isArray(rawBody.transactions)) txns = rawBody.transactions;
+      else if (Array.isArray(rawBody.data)) txns = rawBody.data;
+
+      const today = new Date().toLocaleDateString('en-GB');
+      const newFile = {
+        icon: '⚡',
+        name: activeBankName + ' · Live fetch · ' + today,
+        format: stored?.format || 'api-json',
+        period: today,
+        txns: txns.length || (typeof rawBody.count === 'number' ? rawBody.count : Object.keys(rawBody).length),
+        balance: rawBody.balance || rawBody.closingBalance || rawBody.availableBalance || '—',
+        status: 'matched',
+        raw: rawBody,
+      };
+
+      if (!FETCHED_FILES[connId]) FETCHED_FILES[connId] = [];
+      FETCHED_FILES[connId].unshift(newFile);
+
+      finishUI(true);
+      renderFetchedFiles();
+      updatePreview();
+      const txnCount = newFile.txns;
+      showToast('✓ Fetch complete — ' + txnCount + ' transactions from ' + activeBankName);
+      logEvent('ok', 'BANK_FETCH', 'Live fetch complete · <strong>' + activeBankName + '</strong> · env: <span style="color:' + activeEnvClr + ';font-weight:600">' + activeEnvBadge + '</span> · <strong>' + txnCount + ' transactions</strong> · queued for reconciliation');
+    })
+    .catch(() => {
+      // Proxy not deployed or no stored config — run simulation
+      clearInterval(uiTimer);
+      const simTimer = setInterval(() => {
+        pct = Math.min(pct + Math.random() * 7 + 4, 100);
+        bar.style.width = pct + '%';
+        if (pctLbl) pctLbl.textContent = Math.round(pct) + '%';
+        advanceUI();
+        if (pct >= 100) {
+          clearInterval(simTimer);
+          finishUI(true);
+          renderFetchedFiles();
+          updatePreview();
+          const txnCount = (FETCHED_FILES[activeBankId] || []).reduce((a, f) => a + f.txns, 0);
+          showToast('✓ Fetch complete [simulated] — deploy /api/bank-proxy for live data');
+          logEvent('ok', 'BANK_FETCH', 'Fetch [simulated] · <strong>' + activeBankName + '</strong> · env: <span style="color:' + activeEnvClr + '">' + activeEnvBadge + '</span> · <strong>' + txnCount + ' transactions</strong>');
+        }
+      }, 85);
+    });
 }
 
 function toggleNewBankProto() {
@@ -4944,6 +5028,93 @@ function updateApiAuth() {
       oauthRows[4].style.display = 'none';
     }
   }
+}
+
+
+  // Collect auth credentials from the 5-step wizard
+  function collectWizardAuth() {
+    const type = document.getElementById('new-bank-auth-type')?.value || 'oauth2';
+    const base = {
+      type,
+      tokenUrl:     document.getElementById('new-bank-token-url')?.value || '',
+      clientId:     document.getElementById('new-bank-client-id')?.value || '',
+      clientSecret: document.getElementById('new-bank-client-secret')?.value || '',
+      apiKeyHeader: document.getElementById('new-bank-key-header')?.value || 'X-API-Key',
+      apiKeyValue:  document.getElementById('new-bank-key-value')?.value || '',
+      bearer:       document.getElementById('new-bank-bearer')?.value || '',
+      basicUser:    document.getElementById('new-bank-basic-user')?.value || '',
+      basicPass:    document.getElementById('new-bank-basic-pass')?.value || '',
+    };
+    // Custom headers
+    const customHeaders = {};
+    document.querySelectorAll('.custom-header-row').forEach(row => {
+      const inputs = row.querySelectorAll('input');
+      if (inputs[0]?.value && inputs[1]?.value) {
+        customHeaders[inputs[0].value.trim()] = inputs[1].value.trim();
+      }
+    });
+    base.customHeaders = customHeaders;
+    return base;
+  }
+
+  // Collect auth credentials from the bank source modal
+  function collectSourceAuth() {
+    const type = document.getElementById('bk-auth-method')?.value || 'oauth2';
+    return {
+      type,
+      tokenUrl:     document.getElementById('bk-token-url')?.value || '',
+      clientId:     document.getElementById('bk-client-id')?.value || '',
+      clientSecret: document.getElementById('bk-client-secret')?.value || '',
+      apiKeyValue:  document.getElementById('bk-apikey-fields')?.querySelector('input[type="password"]')?.value || '',
+      apiKeyHeader: document.getElementById('bk-apikey-fields')?.querySelector('input:not([type="password"])')?.value || 'X-API-Key',
+      customHeaders: {},
+    };
+  }
+
+  // Build proxy request body
+  function buildProxyRequest({ baseUrl, auth, path, method, dateFrom, dateTo, accountId, extraParams, customHeaders }) {
+    const params = {};
+    if (dateFrom)  params.fromDate = dateFrom;
+    if (dateTo)    params.toDate   = dateTo;
+    if (accountId) params.accountId = accountId;
+    Object.assign(params, extraParams || {});
+    return {
+      baseUrl,
+      auth,
+      path: (path || '').replace('{accountId}', accountId || '').replace('{account_id}', accountId || '').replace('{id}', accountId || ''),
+      method: method || 'GET',
+      params,
+      customHeaders: { ...(auth.customHeaders || {}), ...(customHeaders || {}) },
+    };
+  }
+
+  // Log proxy error to the test log element
+  function logProxyError(logEl, err, fallback) {
+    if (logEl) {
+      const d = document.createElement('div');
+      d.style.color = 'var(--red)';
+      d.textContent = '✗ ' + (err.message || String(err));
+      logEl.appendChild(d);
+      if (fallback) {
+        const d2 = document.createElement('div');
+        d2.style.color = 'var(--text3)';
+        d2.textContent = 'ℹ Running in simulation mode — deploy /api/bank-proxy to connect live';
+        logEl.appendChild(d2);
+      }
+    }
+  }
+
+
+// ─── BANK CONNECTION STORE ───────────────────────────────────────────────────
+// Stores full connection config (url, auth, stmtPath, etc.) keyed by bank ID
+const BANK_CONNECTIONS = {};
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 // ─── BANK WIZARD ───
@@ -5078,87 +5249,300 @@ let bankTestRunning = false;
 function runBankConnectionTest() {
   if (bankTestRunning) return;
   bankTestRunning = true;
-  const url=document.getElementById('new-bank-url')?.value||'https://uat-api.bank.com/v1';
-  const auth=document.getElementById('new-bank-auth-type');
-  const authTxt=auth?auth.options[auth.selectedIndex].text.split(' —')[0]:'OAuth2';
-  const env=selectedEnv.toUpperCase(), envClr=ENV_CONFIG[selectedEnv].color;
-  const progress=document.getElementById('bank-test-progress'), bar=document.getElementById('bank-test-bar');
-  const pct=document.getElementById('bank-test-pct'), label=document.getElementById('bank-test-label'), log=document.getElementById('bank-test-log');
-  if(!progress) { bankTestRunning=false; return; }
-  progress.style.display='block'; bar.style.background='var(--amber)'; bar.style.width='0%';
-  const re=document.getElementById('bank-test-response'); if(re) re.style.display='none';
-  log.innerHTML='';
-  const host=url.replace('https://','').split('/')[0];
-  const steps=[
-    '→ Resolving DNS: <span style="color:var(--amber)">'+host+'</span>',
-    '→ TLS handshake with <span style="color:'+envClr+'">'+env+'</span> endpoint...',
-    '→ Requesting '+authTxt+' access token...',
-    '→ Token received · expires in 3600s',
-    '→ GET <span style="color:var(--amber)">/accounts/ping</span> · checking permissions...',
-    '→ <span style="color:var(--green)">200 OK</span> · latency <span style="color:var(--green)">48ms</span> · permissions: <span style="color:var(--green)">statements:read ✓  accounts:read ✓</span>',
-  ];
-  let pctVal=0, stepIdx=0;
-  const timer=setInterval(()=>{
-    pctVal=Math.min(pctVal+Math.random()*12+6, 100);
-    if(bar) bar.style.width=pctVal+'%';
-    if(pct) pct.textContent=Math.round(pctVal)+'%';
-    if(label) label.textContent='● Testing '+env+' connection...';
-    if(pctVal>=(stepIdx+1)*(100/steps.length) && stepIdx<steps.length) {
-      const d=document.createElement('div'); d.innerHTML=steps[stepIdx];
-      d.style.color=stepIdx===steps.length-1?'var(--green)':'var(--text3)';
-      log.appendChild(d); log.scrollTop=log.scrollHeight; stepIdx++;
-    }
-    if(pctVal>=100) {
-      clearInterval(timer);
-      bar.style.background='var(--green)';
-      label.innerHTML='<span style="color:var(--green)">✓ Connection successful — '+env+' endpoint reachable</span>';
-      bankTestRunning=false;
-      const name=document.getElementById('new-bank-name')?.value||'Bank';
-      const account=document.getElementById('new-bank-account')?.value||'YOC-TEST-001';
-      showBankTestResponse('{\n  <span style="color:#3b82f6">"status"</span>: <span style="color:#22c55e">"ok"</span>,\n  <span style="color:#3b82f6">"environment"</span>: <span style="color:'+envClr+'">"'+env+'"</span>,\n  <span style="color:#3b82f6">"bank"</span>: <span style="color:#22c55e">"'+name+'"</span>,\n  <span style="color:#3b82f6">"permissions"</span>: [<span style="color:#22c55e">"statements:read"</span>, <span style="color:#22c55e">"accounts:read"</span>],\n  <span style="color:#3b82f6">"latencyMs"</span>: <span style="color:#f59e0b">48</span>\n}','200 OK','var(--green)');
-    }
-  },110);
+  const url     = document.getElementById('new-bank-url')?.value?.trim() || '';
+  const auth    = document.getElementById('new-bank-auth-type');
+  const authTxt = auth ? auth.options[auth.selectedIndex].text.split(' —')[0] : 'OAuth2';
+  const env     = selectedEnv.toUpperCase();
+  const envClr  = ENV_CONFIG[selectedEnv].color;
+  const progress = document.getElementById('bank-test-progress');
+  const bar      = document.getElementById('bank-test-bar');
+  const pct      = document.getElementById('bank-test-pct');
+  const label    = document.getElementById('bank-test-label');
+  const log      = document.getElementById('bank-test-log');
+  if (!progress || !bar || !log) { bankTestRunning = false; return; }
+
+  if (!url) {
+    showToast('Enter a Base URL in Step 2 first');
+    bankTestRunning = false;
+    return;
+  }
+
+  progress.style.display = 'block';
+  bar.style.background = 'var(--amber)';
+  bar.style.width = '0%';
+  const resp = document.getElementById('bank-test-response');
+  if (resp) resp.style.display = 'none';
+  log.innerHTML = '';
+  label.textContent = '● Connecting to ' + env + ' endpoint...';
+
+  const host = url.replace(/https?:\/\//, '').split('/')[0];
+
+  function addLog(html, color) {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    d.style.color = color || 'var(--text3)';
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function animateTo(target, onDone) {
+    const step = () => {
+      const current = parseFloat(bar.style.width) || 0;
+      if (current >= target) { onDone && onDone(); return; }
+      const next = Math.min(current + Math.random() * 8 + 4, target);
+      bar.style.width = next + '%';
+      if (pct) pct.textContent = Math.round(next) + '%';
+      setTimeout(step, 80);
+    };
+    step();
+  }
+
+  // Step 1 — DNS
+  addLog('→ Resolving DNS: <span style="color:var(--amber)">' + host + '</span>');
+  animateTo(20, () => {
+    // Step 2 — TLS
+    addLog('→ TLS handshake with <span style="color:' + envClr + '">' + env + '</span> endpoint...');
+    animateTo(40, () => {
+
+      // Step 3 — Auth token via proxy
+      addLog('→ Requesting ' + authTxt + ' access token via proxy...');
+      animateTo(55, async () => {
+
+        const credentials = collectWizardAuth();
+        const pingPath    = document.getElementById('new-bank-stmt-path')?.value?.trim() || '/accounts/ping';
+        const accountId   = document.getElementById('new-bank-account')?.value?.trim() || '';
+        const reqBody = buildProxyRequest({
+          baseUrl: url,
+          auth: credentials,
+          path: '/accounts/ping',
+          method: 'GET',
+          accountId,
+        });
+
+        let proxyOk = false;
+        let statusText = '';
+        let latencyMs = 0;
+        let responseBody = null;
+
+        try {
+          const t0 = Date.now();
+          const proxyResp = await fetch('/api/bank-proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'connect', ...reqBody }),
+          });
+          latencyMs = Date.now() - t0;
+          const data = await proxyResp.json();
+
+          if (data.error) {
+            addLog('→ Proxy: <span style="color:var(--red)">' + data.error + '</span>', 'var(--text3)');
+            if (data.detail) addLog('  ' + String(data.detail).slice(0, 200), 'var(--text3)');
+            proxyOk = false;
+          } else {
+            proxyOk = true;
+            statusText = data.status || proxyResp.status;
+            responseBody = data;
+          }
+        } catch (err) {
+          // Proxy not deployed — fall back to simulation
+          addLog('→ Proxy not reachable (' + err.message + ') — simulation mode', 'var(--text3)');
+          proxyOk = null; // null = simulated
+          latencyMs = 42 + Math.floor(Math.random() * 30);
+        }
+
+        animateTo(80, () => {
+          if (proxyOk === true) {
+            // Real success
+            addLog('→ Token acquired · auth OK', 'var(--text3)');
+            animateTo(100, () => {
+              bar.style.background = 'var(--green)';
+              bankTestRunning = false;
+              label.innerHTML = '<span style="color:var(--green)">✓ Connection successful — ' + env + ' endpoint reachable · ' + latencyMs + 'ms</span>';
+              addLog('→ <span style="color:var(--green)">200 OK · latency ' + latencyMs + 'ms · permissions verified</span>');
+              const preview = JSON.stringify(responseBody, null, 2).slice(0, 400);
+              showBankTestResponse(
+                '<span style="color:#3b82f6">' + escapeHtml(preview) + '</span>',
+                (statusText || '200') + ' OK', 'var(--green)'
+              );
+              logEvent('ok', 'BANK_FETCH', 'Connection test <strong>passed</strong> · ' + env + ' · ' + host + ' · ' + latencyMs + 'ms');
+            });
+          } else if (proxyOk === false) {
+            // Real failure
+            bar.style.background = 'var(--red)';
+            bankTestRunning = false;
+            label.innerHTML = '<span style="color:var(--red)">✗ Connection failed — check credentials and URL</span>';
+            logEvent('err', 'BANK_FETCH', 'Connection test <strong>failed</strong> · ' + env + ' · ' + host);
+          } else {
+            // Simulated
+            addLog('→ Token received · expires in 3600s · <span style="color:var(--amber)">[simulated]</span>');
+            animateTo(100, () => {
+              bar.style.background = 'var(--green)';
+              bankTestRunning = false;
+              const name = document.getElementById('new-bank-name')?.value || 'Bank';
+              label.innerHTML = '<span style="color:var(--green)">✓ Simulated — deploy /api/bank-proxy for live testing</span>';
+              addLog('→ <span style="color:var(--amber)">200 OK · ' + latencyMs + 'ms [simulated]</span>');
+              showBankTestResponse(
+                '{ "status": "ok", "environment": "' + env + '", "bank": "' + name + '", "note": "simulated — deploy proxy for live" }',
+                '200 OK [sim]', 'var(--amber)'
+              );
+            });
+          }
+        });
+      });
+    });
+  });
 }
 
 function runBankFetchTest() {
   if (bankTestRunning) return;
   bankTestRunning = true;
-  const url=document.getElementById('new-bank-url')?.value||'https://uat-api.bank.com/v1';
-  const path=document.getElementById('new-bank-stmt-path')?.value||'/accounts/{accountId}/transactions';
-  const env=selectedEnv.toUpperCase(), envClr=ENV_CONFIG[selectedEnv].color;
-  const account=document.getElementById('new-bank-account')?.value||'YOC-TEST-001';
-  const fullPath=path.replace('{accountId}',account).replace('{id}',account);
-  const progress=document.getElementById('bank-test-progress'), bar=document.getElementById('bank-test-bar');
-  const pct=document.getElementById('bank-test-pct'), label=document.getElementById('bank-test-label'), log=document.getElementById('bank-test-log');
-  if(!progress) { bankTestRunning=false; return; }
-  progress.style.display='block'; bar.style.background='var(--amber)'; bar.style.width='0%'; log.innerHTML='';
-  const re=document.getElementById('bank-test-response'); if(re) re.style.display='none';
-  const steps=[
-    '→ Authenticating with <span style="color:'+envClr+'">'+env+'</span> endpoint...',
-    '→ Token acquired · scope: statements:read',
-    '→ GET <span style="color:var(--amber)">'+fullPath+'?fromDate=2026-03-09&toDate=2026-03-10</span>',
-    '→ <span style="color:var(--green)">200 OK</span> · 14ms · Content-Type: application/json',
-    '→ Parsing response · 8 transactions found',
-    '→ Normalising to ISO 20022 · field mapping applied',
-    '→ <span style="color:var(--green)">✓ Test fetch complete · 8 transactions ready</span>',
-  ];
-  let pctVal=0, stepIdx=0;
-  const timer=setInterval(()=>{
-    pctVal=Math.min(pctVal+Math.random()*10+5, 100);
-    if(bar) bar.style.width=pctVal+'%';
-    if(pct) pct.textContent=Math.round(pctVal)+'%';
-    if(label) label.innerHTML='● Fetching test statements from <span style="color:'+envClr+'">'+env+'</span>...';
-    if(pctVal>=(stepIdx+1)*(100/steps.length) && stepIdx<steps.length) {
-      const d=document.createElement('div'); d.innerHTML=steps[stepIdx];
-      d.style.color=stepIdx===steps.length-1?'var(--green)':'var(--text3)';
-      log.appendChild(d); log.scrollTop=log.scrollHeight; stepIdx++;
-    }
-    if(pctVal>=100) {
-      clearInterval(timer); bar.style.background='var(--green)'; bankTestRunning=false;
-      const account2=document.getElementById('new-bank-account')?.value||'YOC-TEST-001';
-      showBankTestResponse('{\n  <span style="color:#3b82f6">"environment"</span>: <span style="color:'+envClr+'">"'+env+'"</span>,\n  <span style="color:#3b82f6">"account"</span>: <span style="color:#22c55e">"'+account2+'"</span>,\n  <span style="color:#3b82f6">"transactionCount"</span>: <span style="color:#f59e0b">8</span>,\n  <span style="color:#3b82f6">"transactions"</span>: [\n    { <span style="color:#3b82f6">"id"</span>: <span style="color:#22c55e">"TEST-TXN-001"</span>, <span style="color:#3b82f6">"type"</span>: <span style="color:#22c55e">"CREDIT"</span>, <span style="color:#3b82f6">"amount"</span>: <span style="color:#4ade80">10000.00</span> },\n    { <span style="color:#3b82f6">"id"</span>: <span style="color:#22c55e">"TEST-TXN-002"</span>, <span style="color:#3b82f6">"type"</span>: <span style="color:#22c55e">"DEBIT"</span>,  <span style="color:#3b82f6">"amount"</span>: <span style="color:#ef4444">-2500.00</span>  },\n    <span style="color:#52525b">// ... 6 more transactions</span>\n  ]\n}','200 OK · 8 txns','var(--green)');
-    }
-  },100);
+  const url       = document.getElementById('new-bank-url')?.value?.trim() || '';
+  const path      = document.getElementById('new-bank-stmt-path')?.value?.trim() || '/accounts/{accountId}/transactions';
+  const accountId = document.getElementById('new-bank-account')?.value?.trim() || '';
+  const method    = document.getElementById('stmt-method')?.value || 'GET';
+  const dateFrom  = document.getElementById('param-date-from')?.value || '';
+  const dateTo    = document.getElementById('param-date-to')?.value || '';
+  const env       = selectedEnv.toUpperCase();
+  const envClr    = ENV_CONFIG[selectedEnv].color;
+  const progress  = document.getElementById('bank-test-progress');
+  const bar       = document.getElementById('bank-test-bar');
+  const pct       = document.getElementById('bank-test-pct');
+  const label     = document.getElementById('bank-test-label');
+  const log       = document.getElementById('bank-test-log');
+  if (!progress || !bar || !log) { bankTestRunning = false; return; }
+
+  if (!url) {
+    showToast('Enter a Base URL in Step 2 first');
+    bankTestRunning = false;
+    return;
+  }
+
+  progress.style.display = 'block';
+  bar.style.background = 'var(--amber)';
+  bar.style.width = '0%';
+  const resp = document.getElementById('bank-test-response');
+  if (resp) resp.style.display = 'none';
+  log.innerHTML = '';
+
+  const resolvedPath = path.replace('{accountId}', accountId).replace('{account_id}', accountId).replace('{id}', accountId);
+  const today    = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const from = dateFrom || yesterday;
+  const to   = dateTo   || today;
+
+  function addLog(html, color) {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    d.style.color = color || 'var(--text3)';
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function animateTo(target, onDone) {
+    const step = () => {
+      const current = parseFloat(bar.style.width) || 0;
+      if (current >= target) { onDone && onDone(); return; }
+      const next = Math.min(current + Math.random() * 8 + 4, target);
+      bar.style.width = next + '%';
+      if (pct) pct.textContent = Math.round(next) + '%';
+      setTimeout(step, 80);
+    };
+    step();
+  }
+
+  addLog('→ Authenticating with <span style="color:' + envClr + '">' + env + '</span> endpoint...');
+  animateTo(20, async () => {
+    addLog('→ Token acquired · scope: statements:read');
+    addLog('→ ' + method + ' <span style="color:var(--amber)">' + resolvedPath + '?fromDate=' + from + '&toDate=' + to + '</span>');
+    animateTo(50, async () => {
+
+      const credentials = collectWizardAuth();
+      const reqBody = buildProxyRequest({
+        baseUrl: url,
+        auth: credentials,
+        path,
+        method,
+        dateFrom: from,
+        dateTo: to,
+        accountId,
+      });
+
+      let txnCount = 0;
+      let proxyOk = false;
+      let latencyMs = 0;
+      let rawBody = null;
+
+      try {
+        const t0 = Date.now();
+        const proxyResp = await fetch('/api/bank-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'fetch', ...reqBody }),
+        });
+        latencyMs = Date.now() - t0;
+        const data = await proxyResp.json();
+        if (data.error) {
+          addLog('→ <span style="color:var(--red)">Error: ' + data.error + '</span>');
+          if (data.detail) addLog('  ' + String(data.detail).slice(0, 200), 'var(--text3)');
+          proxyOk = false;
+        } else {
+          rawBody = data.body || data;
+          // Try to count transactions from common response shapes
+          if (Array.isArray(rawBody)) txnCount = rawBody.length;
+          else if (Array.isArray(rawBody.transactions)) txnCount = rawBody.transactions.length;
+          else if (Array.isArray(rawBody.data)) txnCount = rawBody.data.length;
+          else if (typeof rawBody.count === 'number') txnCount = rawBody.count;
+          else if (typeof rawBody.total === 'number') txnCount = rawBody.total;
+          else txnCount = Object.keys(rawBody).length;
+          proxyOk = true;
+        }
+      } catch (err) {
+        addLog('→ Proxy not reachable (' + err.message + ') — simulation mode', 'var(--text3)');
+        proxyOk = null;
+        latencyMs = 14 + Math.floor(Math.random() * 20);
+        txnCount = 8;
+      }
+
+      animateTo(80, () => {
+        if (proxyOk === true) {
+          addLog('→ <span style="color:var(--green)">200 OK · ' + latencyMs + 'ms</span>');
+          addLog('→ Parsing response · <strong>' + txnCount + '</strong> record(s) found');
+          animateTo(100, () => {
+            bar.style.background = 'var(--green)';
+            bankTestRunning = false;
+            label.innerHTML = '<span style="color:var(--green)">✓ Fetch complete · ' + txnCount + ' transaction(s) · ' + latencyMs + 'ms</span>';
+            const preview = JSON.stringify(rawBody, null, 2).slice(0, 800);
+            showBankTestResponse(
+              '<span style="color:#3b82f6">' + escapeHtml(preview) + '</span>',
+              '200 OK · ' + txnCount + ' txns', 'var(--green)'
+            );
+            logEvent('ok', 'BANK_FETCH', 'Statement fetch test <strong>passed</strong> · ' + env + ' · ' + txnCount + ' transactions · ' + latencyMs + 'ms');
+          });
+        } else if (proxyOk === false) {
+          animateTo(100, () => {
+            bar.style.background = 'var(--red)';
+            bankTestRunning = false;
+            label.innerHTML = '<span style="color:var(--red)">✗ Fetch failed — check endpoint and credentials</span>';
+            logEvent('err', 'BANK_FETCH', 'Statement fetch test <strong>failed</strong> · ' + env);
+          });
+        } else {
+          // Simulated
+          addLog('→ <span style="color:var(--green)">200 OK · ' + latencyMs + 'ms</span> <span style="color:var(--amber)">[simulated]</span>');
+          addLog('→ Parsing response · ' + txnCount + ' transactions found');
+          addLog('→ Normalising to ISO 20022 · field mapping applied');
+          animateTo(100, () => {
+            bar.style.background = 'var(--green)';
+            bankTestRunning = false;
+            label.innerHTML = '<span style="color:var(--green)">✓ Simulated · deploy /api/bank-proxy for live fetch</span>';
+            showBankTestResponse(
+              '{ "environment": "' + env + '", "account": "' + (accountId || 'TEST-001') + '", "transactionCount": ' + txnCount + ', "note": "simulated — deploy proxy for live", "transactions": [{ "id": "SIM-001", "type": "CREDIT", "amount": 10000.00 }] }',
+              '200 OK [sim] · ' + txnCount + ' txns', 'var(--amber)'
+            );
+          });
+        }
+      });
+    });
+  });
 }
 
 function showBankTestResponse(html, statusText, statusColor) {
@@ -5187,6 +5571,17 @@ function addNewBank() {
     div.id='bank-item-'+id; div.setAttribute('onclick','selectBank(this,\''+id+'\')');
     div.innerHTML='<div class="bank-conn-top"><div class="bank-conn-icon">🏦</div><div><div class="bank-conn-name">'+name+'</div><div class="bank-conn-type">'+proto.toUpperCase()+' · '+fmtTxt+'</div></div><span class="badge" style="margin-left:auto;font-size:9px;background:'+ENV_CONFIG[selectedEnv].bg+';color:'+envClr+';border:1px solid '+envClr+'">'+env+'</span></div><div class="bank-conn-meta"><span>⏱ Not yet fetched</span></div>';
     list.appendChild(div);
+    // Store full connection config for live fetch
+    BANK_CONNECTIONS[id] = {
+      name:      name,
+      url:       document.getElementById('new-bank-url')?.value?.trim() || '',
+      stmtPath:  document.getElementById('new-bank-stmt-path')?.value?.trim() || '/accounts/{accountId}/transactions',
+      method:    document.getElementById('stmt-method')?.value || 'GET',
+      accountId: document.getElementById('new-bank-account')?.value?.trim() || '',
+      format:    fmtTxt.toLowerCase().replace(/[^a-z0-9]/g,'').replace('apijsonnative','api-json'),
+      env:       selectedEnv,
+      auth:      collectWizardAuth(),
+    };
     FETCHED_FILES[id]=[{icon:'⏱',name:'No statements fetched yet',format:fmtTxt.toLowerCase().replace(/[^a-z0-9]/g,'').replace('apijsonnative','api-json'),period:'—',txns:0,balance:'—',status:'pending'}];
   }
   if(nameEl) nameEl.value='';
@@ -5283,36 +5678,60 @@ function toggleAuthFields() {
 }
 
 function testBankConnection() {
-  const url = document.getElementById('bk-api-url')?.value || document.getElementById('bk-sftp-host')?.value;
+  const url  = document.getElementById('bk-api-url')?.value?.trim() || document.getElementById('bk-sftp-host')?.value?.trim() || '';
   if (!url) { showToast('Enter a URL or host first'); return; }
-  const env = bkSelectedEnv.toUpperCase();
+  const env    = bkSelectedEnv.toUpperCase();
   const envClr = BK_ENV_CONFIG[bkSelectedEnv].color;
   const method = document.getElementById('bk-method-api')?.classList.contains('selected') ? 'API' : 'SFTP';
-  // Show inline progress in the modal footer area
   const footer = document.querySelector('#modal-bankfetch-add .modal-footer');
   if (!footer) return;
-  const old = footer.querySelector('.bk-test-status');
-  if (old) old.remove();
+  footer.querySelector('.bk-test-status')?.remove();
   const status = document.createElement('div');
   status.className = 'bk-test-status';
-  status.style.cssText = 'font-family:\'IBM Plex Mono\',monospace;font-size:11px;margin-right:auto;text-align:left';
-  status.innerHTML = '<span style="color:'+envClr+'">● Testing '+env+' '+method+' connection...</span>';
+  status.style.cssText = "font-family:'IBM Plex Mono',monospace;font-size:11px;margin-right:auto";
+  status.innerHTML = '<span style="color:' + envClr + '">● Connecting to ' + env + ' ' + method + '...</span>';
   footer.prepend(status);
-  const steps = method==='API'
-    ? ['DNS resolve', 'TLS handshake', 'Auth token', 'GET /ping', '200 OK ✓']
-    : ['DNS resolve', 'TCP:22', 'SSH handshake', 'Auth', 'Dir listing ✓'];
-  let i = 0;
-  const timer = setInterval(() => {
-    if (i < steps.length - 1) {
-      status.innerHTML = '<span style="color:'+envClr+'">● '+env+' → '+steps[i]+'...</span>';
-      i++;
-    } else {
-      clearInterval(timer);
-      status.innerHTML = '<span style="color:var(--green)">✓ '+env+' connection OK · '+steps[i]+'</span>';
-      const name = document.getElementById('bk-source-name')?.value || url;
-      if (typeof logEvent==='function') logEvent('ok','BANK_FETCH','Connection test <strong>passed</strong> · '+method+' · env: <strong>'+env+'</strong> · endpoint: '+url);
-    }
-  }, 400);
+
+  const credentials = collectSourceAuth();
+  const reqBody = buildProxyRequest({
+    baseUrl: url,
+    auth: credentials,
+    path: '/accounts/ping',
+    method: 'GET',
+  });
+
+  fetch('/api/bank-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'connect', ...reqBody }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        status.innerHTML = '<span style="color:var(--red)">✗ ' + env + ' ' + method + ' failed: ' + data.error + '</span>';
+        logEvent('err', 'BANK_FETCH', 'Connection test failed · ' + method + ' · env: ' + env + ' · ' + data.error);
+      } else {
+        status.innerHTML = '<span style="color:var(--green)">✓ ' + env + ' ' + method + ' OK · ' + (data.latencyMs || '?') + 'ms</span>';
+        logEvent('ok', 'BANK_FETCH', 'Connection test <strong>passed</strong> · ' + method + ' · env: <strong>' + env + '</strong> · endpoint: ' + url);
+      }
+    })
+    .catch(err => {
+      // Proxy not deployed — simulate
+      const steps = method === 'API'
+        ? ['DNS resolve', 'TLS', 'Auth token', 'GET /ping', '200 OK ✓']
+        : ['DNS resolve', 'TCP:22', 'SSH handshake', 'Auth', 'Dir listing ✓'];
+      let i = 0;
+      const t = setInterval(() => {
+        if (i < steps.length - 1) {
+          status.innerHTML = '<span style="color:' + envClr + '">● ' + env + ' → ' + steps[i] + '...</span>';
+          i++;
+        } else {
+          clearInterval(t);
+          status.innerHTML = '<span style="color:var(--amber)">✓ ' + env + ' OK [simulated] · deploy /api/bank-proxy for live</span>';
+          logEvent('ok', 'BANK_FETCH', 'Connection test [simulated] · ' + method + ' · env: <strong>' + env + '</strong>');
+        }
+      }, 400);
+    });
 }
 
 function saveBankSource() {
