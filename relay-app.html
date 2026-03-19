@@ -3359,17 +3359,102 @@ body {
               <input class="form-input" id="new-bank-token-url" placeholder="https://uat-auth.bank.com/oauth/token">
             </div>
             <div class="form-group">
-              <label class="form-label">Scope (optional)</label>
-              <input class="form-input" placeholder="statements:read accounts:read">
+              <label class="form-label">Scope</label>
+              <input class="form-input" id="new-bank-oauth-scope" placeholder="statements:read accounts:read" value="statements:read accounts:read">
+              <div class="form-hint">Space-separated. Leave blank to omit scope from token request.</div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Client Auth Method</label>
+              <select class="form-select" id="new-bank-token-auth-method">
+                <option value="client_secret_post">Credentials in body (client_secret_post)</option>
+                <option value="client_secret_basic">Credentials in header (client_secret_basic / HTTP Basic)</option>
+                <option value="private_key_jwt">Private Key JWT (contact admin)</option>
+              </select>
+              <div class="form-hint">Most bank UAT endpoints use credentials in body. If you get 401 on the token request, try HTTP Basic.</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Token Expiry Handling</label>
+              <select class="form-select" id="new-bank-token-refresh">
+                <option value="auto">Auto-refresh before expiry (recommended)</option>
+                <option value="401">Re-authenticate on 401</option>
+                <option value="manual">Manual refresh</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- OAuth2 PKCE fields (hidden by default) -->
+        <div id="auth-pkce-fields" style="display:none">
+          <div style="padding:10px 12px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);margin-bottom:12px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--amber)">
+            ⚠ PKCE (Auth Code) requires the user to authenticate via browser redirect. The proxy will generate the authorization URL — paste your callback code below after the bank redirects.
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Client ID</label>
+              <input class="form-input" id="new-bank-pkce-client-id" placeholder="client_id">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Authorization URL</label>
+              <input class="form-input" id="new-bank-pkce-auth-url" placeholder="https://uat-auth.bank.com/authorize">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Token URL</label>
+              <input class="form-input" id="new-bank-pkce-token-url" placeholder="https://uat-auth.bank.com/token">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Redirect URI</label>
+              <input class="form-input" id="new-bank-pkce-redirect" placeholder="https://your-uat.vercel.app/api/oauth-callback">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Scope</label>
+              <input class="form-input" id="new-bank-pkce-scope" placeholder="statements:read accounts:read" value="statements:read accounts:read">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Auth Code (after redirect)</label>
+              <input class="form-input" id="new-bank-pkce-code" placeholder="Paste code from callback URL">
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Token Expiry Handling</label>
-            <select class="form-select">
-              <option>Auto-refresh before expiry (recommended)</option>
-              <option>Re-authenticate on 401</option>
-              <option>Manual refresh</option>
-            </select>
+            <label class="form-label" style="margin-bottom:6px">Step 1 — Generate authorization URL</label>
+            <button onclick="generatePkceAuthUrl()" style="font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--amber);color:var(--bg);border:none;padding:7px 14px;cursor:pointer;margin-right:8px">Generate Auth URL →</button>
+            <span id="pkce-auth-url-out" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text3)">Fill in fields above, then click Generate</span>
+          </div>
+        </div>
+
+        <!-- mTLS fields (hidden by default) -->
+        <div id="auth-mtls-fields" style="display:none">
+          <div style="padding:10px 12px;background:rgba(168,85,247,.07);border:1px solid rgba(168,85,247,.25);margin-bottom:12px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#a855f7">
+            mTLS uses client certificates. Set these environment variables on your Vercel project before deploying:<br>
+            <strong>RELAY_MTLS_CERT</strong> — PEM-encoded client certificate<br>
+            <strong>RELAY_MTLS_KEY</strong> — PEM-encoded private key (unencrypted)<br>
+            <strong>RELAY_MTLS_CA</strong> — Bank-provided CA certificate (if required)
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Certificate Source</label>
+              <select class="form-select" id="new-bank-mtls-source">
+                <option value="env">Vercel environment variables (recommended)</option>
+                <option value="vault">HashiCorp Vault (contact admin)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">TLS Version Minimum</label>
+              <select class="form-select" id="new-bank-mtls-tls">
+                <option value="TLSv1.2">TLS 1.2</option>
+                <option value="TLSv1.3">TLS 1.3 (preferred)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Certificate Common Name (for verification)</label>
+            <input class="form-input" id="new-bank-mtls-cn" placeholder="e.g. relay-uat.yourorg.com">
+            <div class="form-hint">Must match the CN in your client certificate. Used for logging only — the cert itself is in the env var.</div>
           </div>
         </div>
 
@@ -3377,14 +3462,20 @@ body {
         <div id="auth-apikey-fields" style="display:none">
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">Header Name</label>
+              <label class="form-label" id="apikey-name-label">Header Name</label>
               <input class="form-input" id="new-bank-key-header" value="X-API-Key">
+              <div class="form-hint" id="apikey-name-hint">The HTTP header that carries the key, e.g. X-API-Key or Authorization</div>
             </div>
             <div class="form-group">
               <label class="form-label">API Key Value</label>
               <input class="form-input" id="new-bank-key-value" type="password" placeholder="••••••••••••••••">
               <div class="form-hint">AES-256 encrypted at rest · never logged</div>
             </div>
+          </div>
+          <div class="form-group" id="apikey-query-param-row" style="display:none">
+            <label class="form-label">Query Parameter Name</label>
+            <input class="form-input" id="new-bank-key-param" value="api_key">
+            <div class="form-hint">The URL query param name, e.g. ?api_key=… or ?token=…</div>
           </div>
         </div>
 
@@ -3395,9 +3486,16 @@ body {
             <input class="form-input" id="new-bank-bearer" type="password" placeholder="eyJhbGci...">
             <div class="form-hint">AES-256 encrypted at rest · never logged</div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Token Expiry (optional)</label>
-            <input class="form-input" placeholder="2026-12-31T23:59:59Z — leave blank if non-expiring">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Token Expiry (optional)</label>
+              <input class="form-input" id="new-bank-bearer-expiry" placeholder="2026-12-31T23:59:59Z — leave blank if non-expiring">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Header Name</label>
+              <input class="form-input" id="new-bank-bearer-header" value="Authorization">
+              <div class="form-hint">Usually Authorization. Some APIs use X-Auth-Token.</div>
+            </div>
           </div>
         </div>
 
@@ -3412,6 +3510,13 @@ body {
               <label class="form-label">Password</label>
               <input class="form-input" id="new-bank-basic-pass" type="password" placeholder="••••••••••••••••">
             </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Encoding</label>
+            <select class="form-select" id="new-bank-basic-encoding">
+              <option value="base64">Base64 (standard RFC 7617)</option>
+              <option value="base64url">Base64URL (URL-safe variant)</option>
+            </select>
           </div>
         </div>
 
@@ -5036,20 +5141,42 @@ function updateApiAuth() {
     const type = document.getElementById('new-bank-auth-type')?.value || 'oauth2';
     const base = {
       type,
-      tokenUrl:     document.getElementById('new-bank-token-url')?.value || '',
-      clientId:     document.getElementById('new-bank-client-id')?.value || '',
-      clientSecret: document.getElementById('new-bank-client-secret')?.value || '',
-      apiKeyHeader: document.getElementById('new-bank-key-header')?.value || 'X-API-Key',
-      apiKeyValue:  document.getElementById('new-bank-key-value')?.value || '',
-      bearer:       document.getElementById('new-bank-bearer')?.value || '',
-      basicUser:    document.getElementById('new-bank-basic-user')?.value || '',
-      basicPass:    document.getElementById('new-bank-basic-pass')?.value || '',
+      // OAuth2 Client Credentials
+      tokenUrl:        document.getElementById('new-bank-token-url')?.value?.trim() || '',
+      clientId:        document.getElementById('new-bank-client-id')?.value?.trim() || '',
+      clientSecret:    document.getElementById('new-bank-client-secret')?.value || '',
+      scope:           document.getElementById('new-bank-oauth-scope')?.value?.trim() || '',
+      tokenAuthMethod: document.getElementById('new-bank-token-auth-method')?.value || 'client_secret_post',
+      tokenRefresh:    document.getElementById('new-bank-token-refresh')?.value || 'auto',
+      // OAuth2 PKCE
+      pkceClientId:   document.getElementById('new-bank-pkce-client-id')?.value?.trim() || '',
+      pkceAuthUrl:    document.getElementById('new-bank-pkce-auth-url')?.value?.trim() || '',
+      pkceTokenUrl:   document.getElementById('new-bank-pkce-token-url')?.value?.trim() || '',
+      pkceRedirect:   document.getElementById('new-bank-pkce-redirect')?.value?.trim() || '',
+      pkceScope:      document.getElementById('new-bank-pkce-scope')?.value?.trim() || '',
+      pkceCode:       document.getElementById('new-bank-pkce-code')?.value?.trim() || '',
+      // API Key
+      apiKeyHeader:   document.getElementById('new-bank-key-header')?.value?.trim() || 'X-API-Key',
+      apiKeyParam:    document.getElementById('new-bank-key-param')?.value?.trim() || 'api_key',
+      apiKeyValue:    document.getElementById('new-bank-key-value')?.value || '',
+      // Bearer
+      bearer:         document.getElementById('new-bank-bearer')?.value || '',
+      bearerExpiry:   document.getElementById('new-bank-bearer-expiry')?.value?.trim() || '',
+      bearerHeader:   document.getElementById('new-bank-bearer-header')?.value?.trim() || 'Authorization',
+      // Basic
+      basicUser:      document.getElementById('new-bank-basic-user')?.value?.trim() || '',
+      basicPass:      document.getElementById('new-bank-basic-pass')?.value || '',
+      basicEncoding:  document.getElementById('new-bank-basic-encoding')?.value || 'base64',
+      // mTLS
+      mtlsSource:     document.getElementById('new-bank-mtls-source')?.value || 'env',
+      mtlsTls:        document.getElementById('new-bank-mtls-tls')?.value || 'TLSv1.2',
+      mtlsCn:         document.getElementById('new-bank-mtls-cn')?.value?.trim() || '',
     };
     // Custom headers
     const customHeaders = {};
-    document.querySelectorAll('.custom-header-row').forEach(row => {
+    document.querySelectorAll('#modal-add-bank .custom-header-row').forEach(row => {
       const inputs = row.querySelectorAll('input');
-      if (inputs[0]?.value && inputs[1]?.value) {
+      if (inputs[0]?.value?.trim() && inputs[1]?.value?.trim()) {
         customHeaders[inputs[0].value.trim()] = inputs[1].value.trim();
       }
     });
@@ -5060,15 +5187,62 @@ function updateApiAuth() {
   // Collect auth credentials from the bank source modal
   function collectSourceAuth() {
     const type = document.getElementById('bk-auth-method')?.value || 'oauth2';
+    const apikeyFields = document.getElementById('bk-apikey-fields');
+    const pwdInput  = apikeyFields?.querySelector('input[type="password"]');
+    const nameInput = apikeyFields?.querySelector('input:not([type="password"])');
     return {
       type,
-      tokenUrl:     document.getElementById('bk-token-url')?.value || '',
-      clientId:     document.getElementById('bk-client-id')?.value || '',
+      tokenUrl:     document.getElementById('bk-token-url')?.value?.trim() || '',
+      clientId:     document.getElementById('bk-client-id')?.value?.trim() || '',
       clientSecret: document.getElementById('bk-client-secret')?.value || '',
-      apiKeyValue:  document.getElementById('bk-apikey-fields')?.querySelector('input[type="password"]')?.value || '',
-      apiKeyHeader: document.getElementById('bk-apikey-fields')?.querySelector('input:not([type="password"])')?.value || 'X-API-Key',
+      scope:        'statements:read accounts:read',
+      tokenAuthMethod: 'client_secret_post',
+      apiKeyValue:  pwdInput?.value  || '',
+      apiKeyHeader: nameInput?.value?.trim() || 'X-API-Key',
+      apiKeyParam:  'api_key',
+      bearer:       document.getElementById('bk-bearer-token')?.value || '',
+      bearerHeader: 'Authorization',
+      basicUser:    document.getElementById('bk-basic-user')?.value?.trim() || '',
+      basicPass:    document.getElementById('bk-basic-pass')?.value || '',
+      basicEncoding:'base64',
       customHeaders: {},
     };
+  }
+
+  // Generate PKCE authorization URL (Step 1 of PKCE flow)
+  async function generatePkceAuthUrl() {
+    const clientId   = document.getElementById('new-bank-pkce-client-id')?.value?.trim();
+    const authUrl    = document.getElementById('new-bank-pkce-auth-url')?.value?.trim();
+    const redirect   = document.getElementById('new-bank-pkce-redirect')?.value?.trim();
+    const scope      = document.getElementById('new-bank-pkce-scope')?.value?.trim() || 'statements:read accounts:read';
+    const out        = document.getElementById('pkce-auth-url-out');
+    if (!clientId || !authUrl || !redirect) {
+      showToast('Fill in Client ID, Authorization URL and Redirect URI first');
+      return;
+    }
+    // Generate PKCE verifier and challenge in the browser
+    const verifier  = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
+    const encoded   = new TextEncoder().encode(verifier);
+    const hashBuf   = await crypto.subtle.digest('SHA-256', encoded);
+    const challenge = btoa(String.fromCharCode(...new Uint8Array(hashBuf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+    const state     = crypto.randomUUID();
+    // Store verifier so the callback can use it
+    sessionStorage.setItem('pkce_verifier', verifier);
+    sessionStorage.setItem('pkce_state',    state);
+    const params = new URLSearchParams({
+      response_type:         'code',
+      client_id:             clientId,
+      redirect_uri:          redirect,
+      scope,
+      state,
+      code_challenge:        challenge,
+      code_challenge_method: 'S256',
+    });
+    const fullUrl = authUrl + '?' + params.toString();
+    if (out) {
+      out.innerHTML = '<a href="' + fullUrl + '" target="_blank" style="color:var(--amber);word-break:break-all;font-size:10px">Open authorization URL →</a>';
+    }
+    showToast('Auth URL generated — click the link to authorize with the bank');
   }
 
   // Build proxy request body
@@ -5170,10 +5344,48 @@ function selectEnv(env) {
 
 function updateBankAuthFields() {
   const type = document.getElementById('new-bank-auth-type')?.value;
-  const sections = { oauth2:'auth-oauth2-fields', oauth2_pkce:'auth-oauth2-fields', apikey_header:'auth-apikey-fields', apikey_query:'auth-apikey-fields', bearer:'auth-bearer-fields', basic:'auth-basic-fields', mtls:null };
-  ['auth-oauth2-fields','auth-apikey-fields','auth-bearer-fields','auth-basic-fields'].forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
-  const show = sections[type];
-  if (show) { const el=document.getElementById(show); if(el) el.style.display='block'; }
+  const allSections = ['auth-oauth2-fields','auth-pkce-fields','auth-apikey-fields',
+                       'auth-bearer-fields','auth-basic-fields','auth-mtls-fields'];
+  allSections.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+
+  const show = {
+    oauth2:       'auth-oauth2-fields',
+    oauth2_pkce:  'auth-pkce-fields',
+    apikey_header:'auth-apikey-fields',
+    apikey_query: 'auth-apikey-fields',
+    bearer:       'auth-bearer-fields',
+    basic:        'auth-basic-fields',
+    mtls:         'auth-mtls-fields',
+  }[type];
+
+  if (show) {
+    const el = document.getElementById(show);
+    if (el) el.style.display = 'block';
+  }
+
+  // API Key: toggle header-name vs query-param-name label + show query param row
+  if (type === 'apikey_query') {
+    const lbl  = document.getElementById('apikey-name-label');
+    const hint = document.getElementById('apikey-name-hint');
+    const row  = document.getElementById('apikey-query-param-row');
+    const hdr  = document.getElementById('new-bank-key-header');
+    if (lbl)  lbl.textContent  = 'Header Name (optional)';
+    if (hint) hint.textContent = 'Optional — leave blank to skip header, use query param only';
+    if (hdr)  hdr.value = '';
+    if (row)  row.style.display = 'block';
+  } else if (type === 'apikey_header') {
+    const lbl  = document.getElementById('apikey-name-label');
+    const hint = document.getElementById('apikey-name-hint');
+    const row  = document.getElementById('apikey-query-param-row');
+    const hdr  = document.getElementById('new-bank-key-header');
+    if (lbl)  lbl.textContent  = 'Header Name';
+    if (hint) hint.textContent = 'The HTTP header that carries the key, e.g. X-API-Key or Authorization';
+    if (hdr && !hdr.value) hdr.value = 'X-API-Key';
+    if (row)  row.style.display = 'none';
+  }
 }
 
 function addCustomHeader() {
