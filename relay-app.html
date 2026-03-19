@@ -2836,7 +2836,7 @@ body {
         <div style="font-size:13px;color:var(--text2);margin-bottom:20px">Testing connection to <strong id="test-connector-name" style="color:var(--text)">connector</strong>...</div>
         <div id="conn-test-result" class="conn-test testing">
           <div class="conn-test-spinner"></div>
-          <span id="conn-test-msg">Establishing connection...</span>
+          <span class="conn-test-msg-span">Establishing connection...</span>
         </div>
         <div id="test-details" style="display:none;margin-top:16px">
           <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);line-height:2">
@@ -3778,22 +3778,23 @@ function selectConnector(el, name, type, icon) {
 }
 
 function runConnectionTest() {
-  const box = document.getElementById('conn-test-result');
-  const msg = document.getElementById('conn-test-msg');
+  const box     = document.getElementById('conn-test-result');
   const details = document.getElementById('test-details');
+  if (!box || !details) return;
   document.getElementById('test-connector-name').textContent = selectedConnector?.name || 'connector';
   box.className = 'conn-test testing';
-  box.innerHTML = '<div class="conn-test-spinner"></div><span id="conn-test-msg">Establishing TLS connection...</span>';
+  // Reset to initial HTML without injecting a duplicate id
+  box.innerHTML = '<div class="conn-test-spinner"></div><span class="conn-test-msg-span">Establishing TLS connection...</span>';
   details.style.display = 'none';
   const steps = ['Establishing TLS connection...', 'Authenticating credentials...', 'Verifying permissions...', 'Measuring latency...'];
   let i = 0;
   const t = setInterval(() => {
-    const m = document.getElementById('conn-test-msg');
+    const m = box.querySelector('.conn-test-msg-span');
     if (m && i < steps.length) { m.textContent = steps[i]; i++; }
     else {
       clearInterval(t);
-      const b = document.getElementById('conn-test-result');
-      if (b) { b.className = 'conn-test success'; b.innerHTML = '<span style="font-size:16px">✓</span><span>Connection successful — ready to activate</span>'; }
+      box.className = 'conn-test success';
+      box.innerHTML = '<span style="font-size:16px">✓</span><span>Connection successful — ready to activate</span>';
       details.style.display = 'block';
     }
   }, 700);
@@ -4235,9 +4236,9 @@ const NODE_CONFIGS = {
 };
 
 const PROP_TEMPLATES = {
-  'trigger-file':      () => `<div class="prop-label">SFTP Path</div><input class="prop-input" id="pc-path" value="/inbound/" style="margin-bottom:8px"><div class="prop-label" style="margin-top:4px">File Pattern</div><input class="prop-input" id="pc-pattern" value="*.csv">`,
+  'trigger-file':      () => `<div class="prop-label">SFTP Path</div><input class="prop-input pc-path" value="/inbound/" style="margin-bottom:8px"><div class="prop-label" style="margin-top:4px">File Pattern</div><input class="prop-input" id="pc-pattern" value="*.csv">`,
   'trigger-schedule':  () => `<div class="prop-label">Cron Expression</div><input class="prop-input" id="pc-cron" value="0 * * * *" style="margin-bottom:8px;color:var(--amber);font-family:'IBM Plex Mono',monospace"><div class="prop-label" style="margin-top:4px">Timezone</div><select class="prop-select" id="pc-tz"><option>UTC+2 (SAST)</option><option>UTC</option><option>UTC-5 (EST)</option></select>`,
-  'trigger-webhook':   () => `<div class="prop-label">Endpoint Path</div><input class="prop-input" id="pc-path" value="/webhook/inbound" style="margin-bottom:8px"><div class="prop-label" style="margin-top:4px">Auth</div><select class="prop-select"><option>Bearer token</option><option>HMYO signature</option><option>None (internal)</option></select>`,
+  'trigger-webhook':   () => `<div class="prop-label">Endpoint Path</div><input class="prop-input pc-path" value="/webhook/inbound" style="margin-bottom:8px"><div class="prop-label" style="margin-top:4px">Auth</div><select class="prop-select"><option>Bearer token</option><option>HMYO signature</option><option>None (internal)</option></select>`,
   'trigger-bankfetch': () => `<div class="prop-label">Bank Connection</div><select class="prop-select" id="pc-bank" style="margin-bottom:8px"><option>Bank 1 (API)</option><option>Bank 2 (SFTP)</option><option>Bank 3 (SFTP)</option></select><div class="prop-label" style="margin-top:4px">Fetch Window</div><select class="prop-select"><option>Last 24h</option><option>Since last run</option><option>Current day</option></select>`,
   'process-validate':  () => `<div class="prop-label">Schema</div><select class="prop-select" id="pc-schema" style="margin-bottom:8px"><option>JSON Schema v4</option><option>JSON Schema v7</option><option>XML Schema (XSD)</option><option>Custom rules</option></select><div class="prop-label" style="margin-top:4px">On Failure</div><select class="prop-select"><option>Stop workflow</option><option>Skip record</option><option>Route to error branch</option></select>`,
   'process-transform': () => `<div class="prop-label">Input Format</div><select class="prop-select" id="pc-in" style="margin-bottom:8px"><option>CSV</option><option>MT940</option><option>camt.053 XML</option><option>JSON</option><option>Fixed-width</option></select><div class="prop-label" style="margin-top:4px">Output Format</div><select class="prop-select" id="pc-out"><option>JSON (ISO 20022)</option><option>CSV</option><option>XML</option><option>Parquet</option></select>`,
@@ -4246,7 +4247,7 @@ const PROP_TEMPLATES = {
   'action-api':        () => `<div class="prop-label">Method + URL</div><div style="display:flex;gap:6px;margin-bottom:8px"><select class="prop-select" style="width:72px;flex-shrink:0"><option>POST</option><option>PUT</option><option>PATCH</option></select><input class="prop-input" id="pc-url" value="/finance/records" style="flex:1;font-size:11px"></div><div class="prop-label" style="margin-top:4px">Auth</div><select class="prop-select"><option>Bearer token (from integration)</option><option>API key header</option><option>OAuth2</option></select>`,
   'action-db':         () => `<div class="prop-label">Target</div><select class="prop-select" id="pc-target" style="margin-bottom:8px"><option>PostgreSQL — transactions</option><option>PostgreSQL — reconciliation</option><option>Redis (cache)</option></select><div class="prop-label" style="margin-top:4px">Operation</div><select class="prop-select"><option>INSERT (upsert on conflict)</option><option>UPDATE</option><option>INSERT only</option></select>`,
   'action-notify':     () => `<div class="prop-label">Channel</div><select class="prop-select" id="pc-chan" style="margin-bottom:8px"><option>Slack</option><option>Email</option><option>Webhook</option><option>SMS</option></select><div class="prop-label" style="margin-top:4px">Destination</div><input class="prop-input" id="pc-dest" value="#finance">`,
-  'action-sftp':       () => `<div class="prop-label">SFTP Host</div><input class="prop-input" id="pc-host" value="sftp.partner.com" style="margin-bottom:8px"><div class="prop-label" style="margin-top:4px">Remote Path</div><input class="prop-input" id="pc-path" value="/outbound/">`,
+  'action-sftp':       () => `<div class="prop-label">SFTP Host</div><input class="prop-input" id="pc-host" value="sftp.partner.com" style="margin-bottom:8px"><div class="prop-label" style="margin-top:4px">Remote Path</div><input class="prop-input pc-path" value="/outbound/">`,
 };
 
 let selectedNodeEl = null;
