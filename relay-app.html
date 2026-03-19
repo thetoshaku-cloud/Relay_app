@@ -3689,9 +3689,7 @@ function showWfTemplates() {
 
 function exportRecon() {
   const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(
-    'Transaction ID,Amount,Reference,Status,Confidence
-');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent('Transaction ID,Amount,Reference,Status,Confidence\n');
   a.download = 'relay-reconciliation.csv'; a.click();
   showToast('✓ Reconciliation report exported');
 }
@@ -4523,7 +4521,7 @@ function pushAlert(level, svc, msg) {
   const iconChar = level === 'err' ? '⚠' : '⚡';
   const item = document.createElement('div');
   item.className = 'alert-item';
-  item.innerHTML = \`<div class="alert-icon \${icon}">\${iconChar}</div><div><div class="alert-msg">\${msg}</div><div class="alert-time">\${now} · \${svc}</div></div>\`;
+  item.innerHTML = `<div class="alert-icon ${icon}">${iconChar}</div><div><div class="alert-msg">${msg}</div><div class="alert-time">${now} · ${svc}</div></div>`;
   panel.insertBefore(item, panel.firstChild);
 }
 
